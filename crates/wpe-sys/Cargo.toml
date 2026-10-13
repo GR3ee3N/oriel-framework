@@ -1,0 +1,15 @@
+[package]
+name = "wpe-sys"
+description = "FFI declarations for WPE WebKit and its WPEPlatform API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "WPEWebKit-2.0"
+
+[dependencies]
+glib-sys = "0.22"
+gobject-sys = "0.22"
+
+[build-dependencies]
+pkg-config = "0.3"

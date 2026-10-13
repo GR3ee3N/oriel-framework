@@ -1,0 +1,32 @@
+{
+  "name": "@oriel/web",
+  "version": "@VERSION@",
+  "license": "GPL-3.0-or-later",
+  "description": "The page side of Oriel apps: the bridge to the app's Kodi add-on, saved settings, and D-pad navigation",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GR3ee3N/oriel-framework.git",
+    "directory": "web"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "solid-js": "^1.9.15"
+  },
+  "devDependencies": {
+    "solid-js": "^1.9.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.4"
+  }
+}

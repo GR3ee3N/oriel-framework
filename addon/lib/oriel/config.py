@@ -1,0 +1,76 @@
+"""Paths on the box, and per-app development settings in
+/storage/oriel/dev/<add-on id>.json:
+
+    {"url": "http://<pc>:5173/",        load the page from the dev server
+     "inspector": "0.0.0.0:9226",       WebKit's remote inspector
+     "env": {"ORIEL_FB_TRACE": "1"}}    extra environment for the shell
+
+The shell's debug switches for "env": ORIEL_FB_TRACE logs every frame, and
+ORIEL_TRANSFER_OVERRIDE names a file holding "sdr", "hlg" or "pq [nits]"
+to use instead of the HDMI output's transfer.
+"""
+import json
+import os
+
+MODULE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SHELL = os.path.join(MODULE, "bin", "oriel-shell")
+OVERLAY = os.path.join(MODULE, "bin", "run-in-overlay.py")
+WEBKIT_ADDON = "script.module.oriel.webkit"
+FRAMEWORK_ADDON = "script.module.oriel.framework"
+CTL = "/run/oriel/ctl"
+DEV = "/storage/oriel/dev"
+
+# Shared: only one Oriel app runs at a time.
+PORT = 32499
+PROXY_PORT = 32500
+
+
+def addon_id():
+    import xbmcaddon
+
+    return xbmcaddon.Addon().getAddonInfo("id")
+
+
+def dev():
+    path = os.path.join(DEV, f"{addon_id()}.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except ValueError as e:
+        raise RuntimeError(f"{path}: {e}") from e
+
+
+def data_dir(addon=None):
+    import xbmcvfs
+
+    path = xbmcvfs.translatePath(f"special://profile/addon_data/{addon or addon_id()}")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def settings_path():
+    """The framework's settings, the same for every app."""
+    return os.path.join(data_dir(FRAMEWORK_ADDON), "settings.json")
+
+
+def load_settings():
+    try:
+        with open(settings_path()) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_settings(settings):
+    path = settings_path()
+    with open(path + ".tmp", "w") as f:
+        json.dump(settings, f)
+    os.replace(path + ".tmp", path)
+
+
+def webkit_dir():
+    import xbmcaddon
+
+    return xbmcaddon.Addon(WEBKIT_ADDON).getAddonInfo("path")

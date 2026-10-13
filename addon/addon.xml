@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- tools/build.sh adds bin/ and fills in the versions. -->
+<addon id="script.module.oriel.framework" name="Oriel framework" version="@VERSION@" provider-name="Oriel">
+  <requires>
+    <import addon="xbmc.python" version="3.1.0"/>
+    <import addon="script.module.oriel.webkit" version="@WEBKIT_VERSION@"/>
+  </requires>
+  <extension point="xbmc.python.module" library="lib"/>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">A framework for web apps on CoreELEC, using WPE WebKit for the interface and Kodi for video playback.</summary>
+    <platform>linux-aarch64</platform>
+    <license>GPL-3.0-or-later</license>
+    <source>https://github.com/GR3ee3N/oriel-framework</source>
+    <website>https://github.com/GR3ee3N/oriel-framework</website>
+  </extension>
+</addon>

@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+glib = "0.22"
+wpe-sys = { path = "crates/wpe-sys" }
+
+[profile.release]
+lto = "thin"
+strip = true

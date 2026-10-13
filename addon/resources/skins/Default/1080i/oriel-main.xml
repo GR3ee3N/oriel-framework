@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Black under the page, with the app's mark until the page's first frame. -->
+<window>
+  <controls>
+    <control type="image">
+      <left>0</left><top>0</top><width>1920</width><height>1080</height>
+      <texture colordiffuse="FF000000">white.png</texture>
+    </control>
+    <control type="image">
+      <left>876</left><top>340</top><width>168</width><height>168</height>
+      <texture>$INFO[Window.Property(mark)]</texture>
+      <visible>String.IsEmpty(Window.Property(started))</visible>
+    </control>
+  </controls>
+</window>

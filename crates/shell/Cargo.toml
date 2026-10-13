@@ -1,0 +1,12 @@
+[package]
+name = "oriel-shell"
+description = "Shows the WPE WebKit UI on a spare OSD plane over Kodi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glib.workspace = true
+wpe-sys.workspace = true
+libc = "0.2"

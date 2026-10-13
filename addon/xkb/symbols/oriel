@@ -1,0 +1,5 @@
+// TV-remote keys -> keysyms that WebKit maps to DOM keys; see rules/evdev.
+partial alphanumeric_keys
+xkb_symbols "remote" {
+    key <I147> { [ Menu ] };  // KEY_MENU -> ContextMenu
+};
