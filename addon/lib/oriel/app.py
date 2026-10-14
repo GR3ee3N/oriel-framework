@@ -164,6 +164,8 @@ class App:
         self.settings = config.load_settings()
         self.inhibited = None
         self.restarts = []
+        # The shell was stopped to start again with new settings, not to close.
+        self.restarting = False
         self.commands = {}
         for cls in reversed(type(self).__mro__):
             for attr, value in vars(cls).items():
@@ -200,7 +202,11 @@ class App:
 
     def state(self):
         """The page's state; extend it."""
-        return {"hdrWhite": self.settings.get("hdrWhite", HDR_WHITE), "screensaver": self.screensaver}
+        return {
+            "hdrWhite": self.settings.get("hdrWhite", HDR_WHITE),
+            "cpuRendering": self.settings.get("cpuRendering", False),
+            "screensaver": self.screensaver,
+        }
 
     def poll(self):
         """Called four times a second."""
@@ -227,6 +233,8 @@ class App:
         if self.dev.get("inspector"):
             env["WEBKIT_INSPECTOR_HTTP_SERVER"] = self.dev["inspector"]
         env["ORIEL_HDR_WHITE"] = str(self.settings.get("hdrWhite", HDR_WHITE))
+        if self.settings.get("cpuRendering", False):
+            env["WEBKIT_SKIA_ENABLE_CPU_RENDERING"] = "1"
         env.update(self.dev.get("env", {}))
         return env
 
@@ -281,6 +289,9 @@ class App:
                 self.shell.send("hide")
         elif kind == "shell-exit":
             self.on_shell_exit(*args)
+        elif kind == "restart-shell":
+            self.restarting = True
+            self.shell.stop()
         elif kind == "sleep":
             self.close()
         elif kind == "abort":
@@ -343,6 +354,18 @@ class App:
         self.shell.send(f"hdr-white {int(nits)}")
         self.publish()
 
+    @command("cpu-rendering", log=True)
+    def page_cpu_rendering(self, on):
+        if not isinstance(on, bool):
+            raise CommandError("on must be true or false", "invalid")
+        if self.settings.get("cpuRendering", False) == on:
+            return
+        self.settings["cpuRendering"] = on
+        config.save_settings(self.settings)
+        self.publish()
+        # WebKit reads it at start: restart the shell after this reply.
+        self.events.put(("restart-shell",))
+
     def on_action(self, action_id, sent):
         key = KEY_NAMES.get(action_id)
         log(f"action {action_id} ({key}) in {self.phase}, queued {(now() - sent) * 1e3:.1f} ms")
@@ -404,6 +427,11 @@ class App:
             self.show_plane()
 
     def on_shell_exit(self, code):
+        if self.restarting:
+            self.restarting = False
+            log("shell stopped with", code, "- starting it with the new settings")
+            self.shell.start(self.shell_url.split("#")[0], self.shell_env(), self.stage, append_log=True)
+            return
         t = now()
         self.restarts = [r for r in self.restarts if t - r < RESTART_WINDOW]
         if code == 0 or len(self.restarts) >= RESTARTS:

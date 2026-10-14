@@ -28,7 +28,7 @@ resources/mark.png  optional: shown on black until the page's first frame
 ```xml
 <requires>
   <import addon="xbmc.python" version="3.1.0"/>
-  <import addon="script.module.oriel.framework" version="0.1.0"/>
+  <import addon="script.module.oriel.framework" version="0.2.0"/>
 </requires>
 <extension point="xbmc.python.script" library="default.py">
   <provides>executable</provides>
@@ -130,13 +130,14 @@ the state.
 The log records only a command's name. `@oriel.command(name, log=True)`
 also logs its fields; leave it off for commands that carry secrets.
 
-The base `App` has three commands:
+The base `App` has four commands:
 
 | Command | | Success means |
 |---|---|---|
 | `ready` | The page has drawn its first frame. Until then the app's mark shows and keys don't reach the page. | Done. |
 | `exit` | Closes the app. | Closed. |
 | `hdr-white {nits}` | Sets graphics white on HDR output, 80 to 1000 nits, for every Oriel app. | Saved; WebKit uses it from its next frame. |
+| `cpu-rendering {on}` | Makes WebKit draw the page on the CPU (true) or the GPU (false), for every Oriel app: a fallback for boxes whose GPU draws the page wrong. CPU drawing costs about twice the CPU time. | Saved. A change then restarts the shell, so the page loads again and loses its state. |
 
 ### State
 
@@ -145,6 +146,7 @@ The base state is
 | Field | |
 |---|---|
 | `hdrWhite` | Graphics white in nits on HDR output: 203 (BT.2408's reference white) unless set with `hdr-white`. |
+| `cpuRendering` | Whether WebKit draws the page on the CPU: false unless set with `cpu-rendering`. |
 | `screensaver` | Minutes until the page's own screensaver; null for an app without `own_screensaver`, or when Kodi's screensaver is off. |
 
 The app adds its own fields in `state()`.

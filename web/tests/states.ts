@@ -6,12 +6,14 @@ import type { VideoState } from '../src/video';
 
 export const base = {
   "hdrWhite": 203,
+  "cpuRendering": false,
   "screensaver": null
 } satisfies Omit<BaseState, 'connected'>;
 
 export const video = [
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",
     "player": {
@@ -33,6 +35,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -56,6 +59,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -79,6 +83,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -102,6 +107,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -141,6 +147,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",
     "player": {
@@ -164,6 +171,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -185,6 +193,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -206,6 +215,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
     "player": {
@@ -227,6 +237,7 @@ export const video = [
   },
   {
     "hdrWhite": 203,
+    "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",
     "player": {

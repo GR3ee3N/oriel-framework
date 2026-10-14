@@ -82,7 +82,8 @@ class AppTests(unittest.TestCase):
         return self.request("/api/cmd", json.dumps(command).encode())
 
     def test_commands_and_initial_event(self):
-        self.assertEqual(set(self.app.commands), {"ready", "exit", "hdr-white", "add", "refuse", "fail", "opaque", "slow"})
+        self.assertEqual(set(self.app.commands),
+                         {"ready", "exit", "hdr-white", "cpu-rendering", "add", "refuse", "fail", "opaque", "slow"})
         self.assertEqual(self.cmd(cmd="add", amount=2), (200, {"result": {"count": 2}}))
         with urlopen(f"{self.base}/api/events", timeout=3) as events:
             self.assertEqual(events.readline(), b"event: state\n")
@@ -114,6 +115,34 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.app.shell.start.call_args.args[1]["ORIEL_HDR_WHITE"], "300")
         self.assertEqual(self.app.server.state["hdrWhite"], 300)
         self.assertEqual(json.loads((self.directory / "settings.json").read_text()), {"hdrWhite": 300})
+
+    def test_cpu_rendering_restarts_the_shell_with_it(self):
+        self.assertEqual(self.cmd(cmd="cpu-rendering", on="yes"), (400, {"error": "on must be true or false", "code": "invalid"}))
+        self.assertEqual(self.cmd(cmd="cpu-rendering", on=False), (200, {"result": None}))
+        self.app.shell.stop.assert_not_called()
+
+        self.assertEqual(self.cmd(cmd="cpu-rendering", on=True), (200, {"result": None}))
+        self.assertTrue(self.app.server.state["cpuRendering"])
+        self.assertEqual(json.loads((self.directory / "settings.json").read_text()), {"cpuRendering": True})
+        deadline = time.monotonic() + 3
+        while not self.app.shell.stop.called and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.app.shell.stop.assert_called_once()
+        # The stopped shell exits cleanly; that starts it again rather than closing the app.
+        self.app.on_shell_exit(0)
+        self.assertFalse(self.app.exiting)
+        self.assertEqual(self.app.restarts, [])
+        self.assertEqual(self.app.shell.start.call_args.args[1]["WEBKIT_SKIA_ENABLE_CPU_RENDERING"], "1")
+
+        self.assertEqual(self.cmd(cmd="cpu-rendering", on=True), (200, {"result": None}))
+        self.assertEqual(self.app.shell.stop.call_count, 1)
+        self.assertEqual(self.cmd(cmd="cpu-rendering", on=False), (200, {"result": None}))
+        deadline = time.monotonic() + 3
+        while self.app.shell.stop.call_count < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.app.on_shell_exit(0)
+        self.assertNotIn("WEBKIT_SKIA_ENABLE_CPU_RENDERING", self.app.shell.start.call_args.args[1])
+        self.assertFalse(self.app.exiting)
 
     def test_foreign_origins_and_hosts_cannot_change_store(self):
         self.assertEqual(self.request("/api/store", b'{"token": "t"}')[0], 200)

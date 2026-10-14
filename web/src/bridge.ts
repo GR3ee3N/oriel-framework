@@ -9,6 +9,9 @@ export interface BaseState {
   /** Graphics white in nits on HDR output, the framework's setting for
    * every app; 203 (BT.2408's) unless changed. */
   hdrWhite: number;
+  /** WebKit draws the page on the CPU instead of the GPU, the framework's
+   * setting for every app; false unless changed. */
+  cpuRendering: boolean;
   /** Kodi's screensaver delay in minutes, for an app with `own_screensaver`;
    * null for other apps, or when Kodi's screensaver is off. */
   screensaver: number | null;
@@ -19,7 +22,10 @@ export type BaseCommand =
   | { cmd: 'ready' }
   | { cmd: 'exit' }
   /** Sets and saves `hdrWhite`, 80 to 1000; WebKit uses it from its next frame. */
-  | { cmd: 'hdr-white'; nits: number };
+  | { cmd: 'hdr-white'; nits: number }
+  /** Sets and saves `cpuRendering`. A change restarts the page, which loses
+   * its state, as WebKit takes it only when it starts. */
+  | { cmd: 'cpu-rendering'; on: boolean };
 
 /** Why a command failed (docs/apps.md). invalid: it can't work as sent;
  * unavailable: not now, e.g. without playback; failed: the add-on broke;
@@ -57,7 +63,7 @@ export function createBridge<S extends BaseState, C extends { cmd: string }>(
   initial: Omit<S, keyof BaseState>,
 ): Bridge<S, C> {
   // Solid's setters don't take a generic store's keys.
-  const [state, setState] = createStore<BaseState>({ ...initial, connected: false, hdrWhite: 203, screensaver: null });
+  const [state, setState] = createStore<BaseState>({ ...initial, connected: false, hdrWhite: 203, cpuRendering: false, screensaver: null });
 
   const post = async <R>(command: C | BaseCommand): Promise<R> => {
     // text/plain avoids a CORS preflight from the dev server.
