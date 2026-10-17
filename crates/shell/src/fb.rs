@@ -88,6 +88,8 @@ struct Fb {
     deferred: bool,
     /// The frame on screen was converted for the previous HDR mode.
     stale: bool,
+    /// The output mode (`/sys/class/display/mode`) last seen.
+    mode: String,
     transfer: Transfer,
     trace: bool,
     stats: Stats,
@@ -197,6 +199,7 @@ pub fn open(path: &str) -> std::io::Result<(i32, i32)> {
         in_flight: 0,
         deferred: false,
         stale: false,
+        mode: output_mode(),
         transfer: Transfer::Sdr,
         trace: std::env::var_os("ORIEL_FB_TRACE").is_some(),
         stats: Stats { since: monotonic(), ..Default::default() },
@@ -220,6 +223,7 @@ pub fn install(view: *mut wpe::WPEView) {
         poll_transfer();
         glib::timeout_add_local(std::time::Duration::from_millis(250), || {
             poll_transfer();
+            poll_mode();
             glib::ControlFlow::Continue
         });
         add_signal(libc::SIGTERM, on_term);
@@ -366,6 +370,26 @@ fn poll_transfer() {
         if !converts {
             eprintln!("oriel-shell: can't convert for {transfer:?}; the page goes out as SDR");
         }
+        fb.refresh();
+    });
+}
+
+fn output_mode() -> String {
+    std::fs::read_to_string("/sys/class/display/mode").unwrap_or_default()
+}
+
+/// A pan sizes osd1 for the output mode of the time, so a page shown just
+/// before playback switches 2160p back to 1080p stays at twice the screen's
+/// size until its next frame: show the frame again for the new mode.
+fn poll_mode() {
+    let mode = output_mode();
+    FB.with_borrow_mut(|fb| {
+        let Some(fb) = fb.as_mut() else { return };
+        if fb.mode == mode {
+            return;
+        }
+        println!("oriel-shell: output {} t={:.6}", mode.trim(), monotonic());
+        fb.mode = mode;
         fb.refresh();
     });
 }
