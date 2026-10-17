@@ -13,6 +13,68 @@ from urllib.request import Request, urlopen
 from .kodi import kodi
 
 
+class FakeKodi:
+    """Kodi's VideoPlayer as far as tracks go. The player's methods queue
+    their switches, applied later and in order, as Kodi does; each audio or
+    embedded subtitle switch seeks. forced maps forced subtitles to their
+    language; languages are the audio tracks'."""
+
+    def __init__(self, audio, subtitle, enabled, forced=None, languages=()):
+        self.audio, self.subtitle, self.enabled = audio, subtitle, enabled
+        # Whether the subtitle's packets reach the player.
+        self.demuxed = enabled and subtitle is not None
+        self.forced = forced or {}
+        self.languages = list(languages)
+        self.queue = []
+        self.seeks = 0
+        self.play, self.pause = Mock(), Mock()
+
+    def properties(self, method, playerid, properties):
+        subtitle = {} if self.subtitle is None else {"index": self.subtitle, "isforced": self.subtitle in self.forced}
+        return {"currentaudiostream": {"index": self.audio}, "currentsubtitle": subtitle,
+                "subtitleenabled": self.enabled,
+                "subtitles": [{"index": index, "isforced": index in self.forced} for index in range(4)]}
+
+    def setAudioStream(self, index):
+        self.queue.append(("audio", index))
+
+    def setSubtitleStream(self, index):
+        # The binding shows it too.
+        self.queue += [("subtitle", index), ("visible", True)]
+
+    def showSubtitles(self, visible):
+        self.queue.append(("visible", visible))
+
+    def setSubtitles(self, path):
+        self.queue.append(("file", path))
+
+    def process(self):
+        for kind, value in self.queue:
+            if kind == "audio":
+                self.audio = value
+                self.seeks += 1
+                # AdaptForcedSubtitles
+                if self.subtitle in self.forced:
+                    language = self.languages[value] if value < len(self.languages) else None
+                    match = [index for index, forced in sorted(self.forced.items()) if forced == language]
+                    if match:
+                        self.subtitle, self.demuxed = match[0], True
+                    self.enabled = bool(match)
+                    self.demuxed = self.demuxed and self.enabled
+            elif kind == "subtitle":
+                self.subtitle, self.demuxed = value, True
+                self.seeks += 1
+            elif kind == "visible":
+                # Showing doesn't turn the stream back on in the demuxer.
+                self.enabled = value
+                self.demuxed = self.demuxed and value
+        self.queue = []
+
+    def shown(self):
+        """The subtitle on screen, or None."""
+        return self.subtitle if self.enabled and self.demuxed else None
+
+
 class VideoTests(unittest.TestCase):
     def setUp(self):
         self.oriel, self.video, _ = self.enterContext(kodi())
@@ -34,20 +96,120 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(set(app.commands), {"ready", "exit", "hdr-white", "cpu-rendering", "media-source", "play",
                                              "osd-on", "osd-off", "set-paused", "stop", "seek-to", "audio", "subtitle"})
 
-    def test_audio_change_preserves_subtitle_choice(self):
-        for enabled in (False, True):
-            with self.subTest(enabled=enabled):
-                tracks = {"currentsubtitle": {"index": 3}, "subtitleenabled": enabled}
-                app = self.app_in("osd")
-                app.player.setAudioStream.side_effect = lambda index: tracks.update(
-                    currentsubtitle={"index": 0}, subtitleenabled=True)
-                app.player.setSubtitleStream.side_effect = lambda index: tracks.update(currentsubtitle={"index": index})
-                app.player.showSubtitles.side_effect = lambda on: tracks.update(subtitleenabled=on)
-                self.video.jsonrpc = lambda *args, **kwargs: copy.deepcopy(tracks)
-                app.page_audio(1)
-                self.assertEqual(tracks["subtitleenabled"], enabled)
-                if enabled:
-                    self.assertEqual(tracks["currentsubtitle"]["index"], 3)
+    def tracks_app(self, phase, kodi):
+        app = self.app_in(phase)
+        app.media_url = lambda path: path
+        app.player = kodi
+        self.video.jsonrpc = kodi.properties
+        return app
+
+    def start(self, kodi, **streams):
+        app = self.tracks_app("loading", kodi)
+        app.start_streams = streams
+        with patch.object(self.video.threading, "Thread"):
+            app.on_started()
+        kodi.process()
+        self.assertEqual(app.phase, "playing")
+        return app
+
+    def test_start_switches_only_tracks_that_differ(self):
+        for audio, subtitle, enabled, want_audio, want_subtitle, seeks in (
+            (1, 2, True, 1, 2, 0), (1, 2, True, None, None, 0), (1, 2, True, 1, -1, 0),
+            (0, 2, True, 1, 2, 1), (1, 0, True, 1, 2, 1), (0, 0, True, 1, 2, 2),
+            # Kodi selected the track but hid it: it must be switched on in the demuxer.
+            (1, 2, False, 1, 2, 1),
+        ):
+            with self.subTest(audio=audio, subtitle=subtitle, enabled=enabled,
+                              want_audio=want_audio, want_subtitle=want_subtitle):
+                kodi = FakeKodi(audio, subtitle, enabled)
+                self.start(kodi, audio=want_audio, subtitle=want_subtitle)
+                self.assertEqual(kodi.audio, audio if want_audio is None else want_audio)
+                if want_subtitle is None:
+                    self.assertEqual(kodi.shown(), subtitle if enabled else None)
+                else:
+                    self.assertEqual(kodi.shown(), None if want_subtitle < 0 else want_subtitle)
+                self.assertEqual(kodi.seeks, seeks)
+
+    def test_start_with_new_audio_overrides_forced_replacement(self):
+        for want in (0, 2, -1):
+            with self.subTest(want=want):
+                kodi = FakeKodi(0, 0, True, forced={0: "en", 1: "de"}, languages=["en", "de"])
+                self.start(kodi, audio=1, subtitle=want)
+                self.assertEqual((kodi.audio, kodi.shown()), (1, None if want < 0 else want))
+
+    def test_audio_change_keeps_subtitle_choice(self):
+        for subtitle, enabled, forced, seeks in (
+            (2, True, {}, 1), (None, False, {}, 1),
+            # Kodi swaps a forced subtitle when audio changes, even a hidden one.
+            (0, True, {0: "en", 1: "de"}, 2), (0, False, {0: "en", 1: "de"}, 1),
+            (0, True, {0: "en"}, 2), (0, False, {0: "en"}, 1),
+        ):
+            with self.subTest(subtitle=subtitle, enabled=enabled, forced=forced):
+                kodi = FakeKodi(0, subtitle, enabled, forced=forced, languages=["en", "de"])
+                self.tracks_app("osd", kodi).page_audio(1)
+                kodi.process()
+                self.assertEqual(kodi.audio, 1)
+                self.assertEqual(kodi.shown(), subtitle if enabled else None)
+                self.assertEqual(kodi.seeks, seeks)
+
+    def test_reselecting_the_audio_track_does_nothing(self):
+        kodi = FakeKodi(1, 0, True, forced={0: "en"}, languages=["en", "de"])
+        self.tracks_app("osd", kodi).page_audio(1)
+        self.assertEqual(kodi.queue, [])
+
+    def test_subtitle_commands(self):
+        for subtitle, enabled, commands, shown, seeks in (
+            (2, True, [{"index": 2}], 2, 0), (2, True, [{"index": 3}], 3, 1),
+            (2, True, [{"index": -1}], None, 0), (2, True, [{}], None, 0),
+            (2, True, [{"index": -1}, {"index": 2}], 2, 1), (2, False, [{"index": 2}], 2, 1),
+        ):
+            with self.subTest(subtitle=subtitle, enabled=enabled, commands=commands):
+                kodi = FakeKodi(0, subtitle, enabled)
+                app = self.tracks_app("osd", kodi)
+                for args in commands:
+                    app.page_subtitle(**args)
+                    kodi.process()
+                self.assertEqual((kodi.shown(), kodi.seeks), (shown, seeks))
+
+    def test_commands_before_kodi_applies_the_last(self):
+        for subtitle, enabled, forced, commands, shown in (
+            (2, True, {}, [("subtitle", -1), ("subtitle", 2)], 2),
+            (2, True, {}, [("subtitle", 2), ("subtitle", -1)], None),
+            # A forced subtitle Kodi doesn't report yet is still swapped by the audio switch.
+            (2, True, {0: "en"}, [("subtitle", 0), ("audio", 1)], 0),
+            (0, True, {0: "en"}, [("subtitle", 2), ("audio", 1)], 2),
+        ):
+            with self.subTest(subtitle=subtitle, enabled=enabled, forced=forced, commands=commands):
+                kodi = FakeKodi(0, subtitle, enabled, forced=forced, languages=["en", "de"])
+                app = self.tracks_app("osd", kodi)
+                for command, index in commands:
+                    getattr(app, f"page_{command}")(index=index)
+                kodi.process()
+                self.assertEqual(kodi.shown(), shown)
+
+    def test_new_file_forgets_asked_subtitle(self):
+        kodi = FakeKodi(0, 2, True)
+        app = self.tracks_app("osd", kodi)
+        app.page_subtitle(index=-1)
+        kodi.process()
+        with patch.object(self.video.threading, "Thread"):
+            app.page_play("/next.mkv", session="two", audio=0, subtitle=2)
+        # Kodi opened the new file with subtitle 2 showing.
+        kodi.enabled = kodi.demuxed = True
+        app.on_started()
+        kodi.process()
+        self.assertEqual((kodi.shown(), kodi.seeks), (2, 0))
+
+    def test_subtitle_file_is_loaded(self):
+        kodi = FakeKodi(0, 2, True)
+        self.tracks_app("osd", kodi).page_subtitle(index=2, file="/subs.srt")
+        self.assertEqual(kodi.queue, [("file", "/subs.srt")])
+
+    def test_unknown_tracks_switch_as_asked(self):
+        kodi = FakeKodi(1, 2, True)
+        kodi.properties = lambda *args, **kwargs: None
+        self.start(kodi, audio=1, subtitle=2)
+        self.assertEqual((kodi.audio, kodi.shown(), kodi.seeks), (1, 2, 2))
 
     def test_replacements_preserve_pause_only_in_same_session(self):
         for state, previous, session, plays, paused in (

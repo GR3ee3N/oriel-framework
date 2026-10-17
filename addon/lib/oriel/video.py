@@ -27,6 +27,8 @@ from .proxy import ProxyProcess
 
 PROXY = f"http://127.0.0.1:{config.PROXY_PORT}"
 TRACK_PROPERTIES = ["audiostreams", "subtitles", "currentaudiostream", "currentsubtitle", "subtitleenabled"]
+# select_tracks: the viewer's subtitle choice, whatever an audio switch does to it.
+KEEP = "keep"
 
 # Back stops playback, unless the OSD only just closed: that Back was meant for it.
 BACK_GRACE = 1.0
@@ -117,6 +119,9 @@ class VideoApp(App):
         super().__init__()
         self.player_state = player_state()
         self.start_streams = {}
+        # The subtitle last asked of Kodi for this file, (index, shown); None
+        # until then.
+        self.subtitle_asked = None
         # Kodi's clock starts at 0 where the stream begins; for a transcode
         # its duration is a guess, so the page's duration wins (None: Kodi's).
         self.stream_offset = 0.0
@@ -232,6 +237,7 @@ class VideoApp(App):
         self.loading_since = now()
         self.stream_offset = stream_offset
         self.duration = duration
+        self.subtitle_asked = None
         # Applied in on_started. Subtitle -1 means none.
         self.start_streams = {
             "audio": audio, "subtitle": subtitle, "subtitleFile": subtitleFile, "paused": paused,
@@ -282,12 +288,7 @@ class VideoApp(App):
     @command("audio", log=True)
     def page_audio(self, index):
         self.require("playing", "osd")
-        index = integer("index", index, 0)
-        tracks = jsonrpc("Player.GetProperties", playerid=1, properties=["currentsubtitle", "subtitleenabled"])
-        self.player.setAudioStream(index)
-        # Kodi selects forced subtitles when audio changes; keep the viewer's choice.
-        if tracks:
-            self.set_subtitle(tracks["currentsubtitle"]["index"] if tracks["subtitleenabled"] else -1)
+        self.select_tracks(audio=integer("index", index, 0), subtitle=KEEP)
 
     @command("subtitle", log=True)
     def page_subtitle(self, index=None, file=None):
@@ -295,7 +296,7 @@ class VideoApp(App):
         index = integer("index", index, -1, optional=True)
         if text("file", file, optional=True):
             self.media_url(file)
-        self.set_subtitle(index, file)
+        self.select_tracks(subtitle=-1 if index is None else index, file=file)
 
     @command("osd-on")
     def page_osd_on(self):
@@ -329,23 +330,49 @@ class VideoApp(App):
         self.publish()
         self.show_plane()
 
-    def set_subtitle(self, index, file=None):
+    def select_tracks(self, audio=None, subtitle=None, file=None):
+        """Has Kodi play these tracks. An audio or embedded subtitle switch
+        reopens the stream and seeks, even to the active track, which can
+        upset A/V sync, so only what differs is switched. Subtitle -1 means
+        none, None leaves it to Kodi, KEEP keeps the viewer's choice; a file
+        overrides it."""
+        # Kodi applies switches later, in the order they're asked for, and
+        # reports them only once it has: decide them all from what's active
+        # now, with the subtitle last asked for standing in for Kodi's.
+        tracks = jsonrpc("Player.GetProperties", playerid=1, properties=[
+            "currentaudiostream", "currentsubtitle", "subtitleenabled", "subtitles"]) or {}
+        index, shown = self.subtitle_asked or (
+            (tracks.get("currentsubtitle") or {}).get("index"), tracks.get("subtitleenabled"))
+        showing = index if shown else None
+        replaced = False
+        if audio is not None and (tracks.get("currentaudiostream") or {}).get("index") != audio:
+            self.player.setAudioStream(audio)
+            # Kodi then swaps a forced subtitle for one in the new audio's
+            # language, or hides it, also when it isn't showing.
+            replaced = any(s["index"] == index and s.get("isforced") for s in tracks.get("subtitles", []))
+        if subtitle == KEEP:
+            subtitle = (-1 if showing is None else showing) if replaced else None
         if file:
             self.player.setSubtitles(self.media_url(file))
-        elif index is None or index < 0:
+            self.subtitle_asked = None
+        elif subtitle is None:
+            pass
+        elif subtitle < 0:
             self.player.showSubtitles(False)
+            self.subtitle_asked = (index, False)
         else:
-            self.player.setSubtitleStream(index)
+            # A hidden track is off in the demuxer too, and showing it doesn't
+            # turn it back on: only a showing one can be left as it is.
+            if replaced or showing != subtitle:
+                self.player.setSubtitleStream(subtitle)
             self.player.showSubtitles(True)
+            self.subtitle_asked = (subtitle, True)
 
     def on_started(self):
         if self.phase != "loading":
             return
         streams = self.start_streams or {}
-        if streams.get("audio") is not None:
-            self.player.setAudioStream(streams["audio"])
-        if streams.get("subtitleFile") or streams.get("subtitle") is not None:
-            self.set_subtitle(streams.get("subtitle"), streams.get("subtitleFile"))
+        self.select_tracks(streams.get("audio"), streams.get("subtitle"), streams.get("subtitleFile"))
         self.phase = "playing"
         self.publish()
         self.osd_thread = threading.Thread(target=self.osd_window.doModal, name="oriel-osd", daemon=True)
