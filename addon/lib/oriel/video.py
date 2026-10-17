@@ -21,7 +21,7 @@ import xbmc
 import xbmcgui
 
 from . import config, device
-from .app import ADDON_WINDOWS, App, CommandError, Keys, command, jsonrpc, now, window
+from .app import ADDON_WINDOWS, App, CommandError, Keys, command, jsonrpc, kodi_setting, now, window
 from .log import log
 from .proxy import ProxyProcess
 
@@ -33,6 +33,19 @@ BACK_GRACE = 1.0
 # Kodi handles these itself in any window during playback, so we don't do
 # them twice. Previous seeks to the start.
 KODI_KEYS = ("playpause", "stop", "fastforward", "rewind", "previous")
+# Kodi's "Adjust display refresh rate: On start / stop": playback's end puts
+# the output back in the mode it had before.
+REFRESH_ON_START_STOP = 2
+# The longest the page waits for that.
+MODE_WAIT = 5.0
+
+
+def output_mode():
+    try:
+        with open("/sys/class/display/mode") as f:
+            return f.read().strip()
+    except OSError:
+        return None
 
 
 def player_state(state="idle", time=0, duration=None, session=None, meta=None, ended=None):
@@ -122,6 +135,10 @@ class VideoApp(App):
         self.player = Player(self.events)
         self.idle = 0
         self.polls = 0
+        # The output mode while browsing, and until when the page waits for
+        # Kodi to return to it after playback.
+        self.browse_mode = None
+        self.show_by = None
 
     def media_url(self, path):
         """The URL Kodi plays for a path or subtitle file from the page."""
@@ -208,6 +225,9 @@ class VideoApp(App):
         if self.phase != "browse":
             self.close_osd()
             self.replaced_at = now()
+        elif self.show_by is None:
+            self.browse_mode = output_mode()
+        self.show_by = None
         self.phase = "loading"
         self.loading_since = now()
         self.stream_offset = stream_offset
@@ -352,7 +372,14 @@ class VideoApp(App):
             s = self.player_state
             self.player_state = player_state("idle", s["time"], s["duration"], s["session"], s["meta"], ended)
             self.publish()
-            self.show_plane()
+            # Shown in the playback's mode, the page would flash up before
+            # the TV's switch back blanks it.
+            if (self.browse_mode and output_mode() != self.browse_mode
+                    and kodi_setting("videoplayer.adjustrefreshrate") == REFRESH_ON_START_STOP):
+                log("waiting for the output to go back to", self.browse_mode)
+                self.show_by = now() + MODE_WAIT
+            else:
+                self.show_plane()
 
     def near_end(self):
         # Kodi's end callback comes ~1 s late and can lose to the poll.
@@ -367,7 +394,15 @@ class VideoApp(App):
                 log("playback dialog did not close")
             self.osd_thread = None
 
+    def show_plane(self):
+        if self.show_by is None:
+            super().show_plane()
+
     def poll(self):
+        if self.show_by is not None and (output_mode() == self.browse_mode or now() > self.show_by):
+            log("output", output_mode(), "- showing the page")
+            self.show_by = None
+            self.show_plane()
         if self.phase in ("playing", "osd"):
             # Kodi doesn't always call back when playback ends.
             if not self.player.isPlayingVideo():
