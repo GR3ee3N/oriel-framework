@@ -16,14 +16,20 @@ once listening, then `ok` or `error <why>` for each source update.
 """
 import json
 import os
+import re
 import select
 import subprocess
 import sys
 import threading
+import time
 from urllib.parse import urlsplit
 
 HERE = os.path.abspath(__file__)
 ANSWER_TIMEOUT = 5
+CHUNK = 256 * 1024
+# Seconds before each attempt to fetch the rest of a body the source ended
+# early; Kodi gives up on a read after about 20 s without data.
+RESUME_DELAYS = (0, 1, 2, 4)
 
 
 class ProxyProcess:
@@ -99,11 +105,54 @@ def parse_source(line):
     return u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80), u.path.rstrip("/"), headers
 
 
+def body_span(status, length, content_range):
+    """The first and last byte of the file in a response body of `length`
+    bytes, or None if unknown (no Content-Length, or not the file)."""
+    if length is None:
+        return None
+    if status == 200:
+        return 0, length - 1
+    m = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range or "")
+    if status == 206 and m and int(m[2]) - int(m[1]) + 1 == length:
+        return int(m[1]), int(m[2])
+    return None
+
+
 def serve(port):
     import http.client
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     source = {}
+
+    def log(*args):
+        print(*args, file=sys.stderr, flush=True)
+
+    class Upstream:
+        """The connection to the source for one of Kodi's requests."""
+
+        def __init__(self, s, method, url, headers):
+            scheme, self.host, self.port, prefix, extra = s
+            self.kind = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+            self.method, self.url = method, prefix + url
+            self.headers = {**headers, **extra}
+            self.conn = None
+
+        def open(self, more=None):
+            self.close()
+            self.conn = self.kind(self.host, self.port, timeout=30)
+            self.conn.request(self.method, self.url, headers={**self.headers, **(more or {})})
+            return self.conn.getresponse()
+
+        def close(self):
+            if self.conn:
+                self.conn.close()
+
+    def read(r, size):
+        """Up to `size` bytes of r's body; nothing if the source let go."""
+        try:
+            return r.read(size)
+        except (OSError, http.client.HTTPException):
+            return b""
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -120,18 +169,14 @@ def serve(port):
             s = source.get("value")
             if not s:
                 return self.send_error(503, "no media source")
-            scheme, host, port, prefix, extra = s
-            kind = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
-            conn = kind(host, port, timeout=30)
-            headers = {k: v for k, v in self.headers.items() if k.lower() in ("range", "user-agent", "accept")}
-            headers.update(extra)
+            headers = {k.title(): v for k, v in self.headers.items() if k.lower() in ("range", "user-agent", "accept")}
+            upstream = Upstream(s, method, self.path, headers)
             # The path, never a query: it can hold tokens.
             path = self.path.split("?")[0]
             try:
-                conn.request(method, prefix + self.path, headers=headers)
-                r = conn.getresponse()
+                r = upstream.open()
                 if r.status >= 400:
-                    print(f"{method} {path}: {r.status} {r.reason}", file=sys.stderr, flush=True)
+                    log(f"{method} {path}: {r.status} {r.reason}")
                 self.send_response(r.status, r.reason)
                 for k, v in r.getheaders():
                     if k.lower() not in ("connection", "transfer-encoding", "keep-alive"):
@@ -139,14 +184,57 @@ def serve(port):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 if method == "GET":
-                    while chunk := r.read(256 * 1024):
-                        self.wfile.write(chunk)
+                    self.copy(r, upstream, path)
             except (BrokenPipeError, ConnectionResetError, http.client.IncompleteRead):
                 pass  # Kodi or the source let go (a stream replaced, say)
             except OSError as e:
-                print(f"{method} {path} failed: {e}", file=sys.stderr, flush=True)
+                log(f"{method} {path} failed: {e}")
             finally:
-                conn.close()
+                upstream.close()
+
+        def copy(self, r, upstream, path):
+            """Sends r's body to Kodi. A source can end a body early (Plex
+            drops a user's streams while another of their playbacks runs).
+            Kodi takes a short body read with nothing cached, as right after
+            a seek, for the end of the file, so the rest of a file's body is
+            fetched with a range request and Kodi gets it whole."""
+            span = body_span(r.status, r.length, r.getheader("Content-Range"))
+            if not span:
+                while chunk := r.read(CHUNK):
+                    self.wfile.write(chunk)
+                return
+            at, end = span
+            # A range of a changed file must not be spliced in.
+            validator = r.getheader("ETag") or r.getheader("Last-Modified")
+            tries = resumed = 0
+            try:
+                while at <= end:
+                    chunk = read(r, min(CHUNK, end - at + 1)) if r else b""
+                    if chunk:
+                        self.wfile.write(chunk)
+                        at += len(chunk)
+                        tries = 0
+                        continue
+                    if tries == len(RESUME_DELAYS):
+                        log(f"GET {path}: the source ended the body at byte {at} of {end + 1}")
+                        return
+                    time.sleep(RESUME_DELAYS[tries])
+                    tries += 1
+                    more = {"Range": f"bytes={at}-{end}"}
+                    if validator:
+                        more["If-Range"] = validator
+                    try:
+                        r = upstream.open(more)
+                    except (OSError, http.client.HTTPException):
+                        r = None
+                        continue
+                    if (r.status, body_span(r.status, r.length, r.getheader("Content-Range"))) != (206, (at, end)):
+                        log(f"GET {path}: the source did not resume at byte {at} ({r.status} {r.reason})")
+                        return
+                    resumed += 1
+            finally:
+                if resumed:
+                    log(f"GET {path}: early ends resumed: {resumed}")
 
         def log_message(self, *args):
             pass

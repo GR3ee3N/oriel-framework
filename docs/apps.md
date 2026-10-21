@@ -211,7 +211,9 @@ stops playback and any other key except Stop shows the OSD.
 Media plays from absolute URLs, or from relative paths on the media source
 that the page sets with `media-source`: the framework's proxy on
 `127.0.0.1:32500` forwards Kodi's requests to the source with the given
-headers, so tokens stay out of Kodi's URLs. Override
+headers, so tokens stay out of Kodi's URLs. When the source ends a file's
+body early, the proxy fetches the rest with a range request, so Kodi gets
+the whole body. Override
 `media_url(path)` and `is_ours(file)` to play from elsewhere; `is_ours`
 decides whether Kodi's current file is stopped when the app closes.
 
