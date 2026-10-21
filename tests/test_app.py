@@ -83,7 +83,7 @@ class AppTests(unittest.TestCase):
 
     def test_commands_and_initial_event(self):
         self.assertEqual(set(self.app.commands),
-                         {"ready", "exit", "hdr-white", "cpu-rendering", "add", "refuse", "fail", "opaque", "slow"})
+                         {"ready", "exit", "cpu-rendering", "add", "refuse", "fail", "opaque", "slow"})
         self.assertEqual(self.cmd(cmd="add", amount=2), (200, {"result": {"count": 2}}))
         with urlopen(f"{self.base}/api/events", timeout=3) as events:
             self.assertEqual(events.readline(), b"event: state\n")
@@ -106,15 +106,6 @@ class AppTests(unittest.TestCase):
                 status, reply = self.request("/api/cmd", body.encode())
                 self.assertEqual((status, reply["code"]), (400, "invalid"))
         self.assertEqual(self.app.count, 0)
-
-    def test_hdr_setting_survives_shell_restart(self):
-        self.assertEqual(self.cmd(cmd="hdr-white", nits=2000), (400, {"error": "nits must be 80 to 1000", "code": "invalid"}))
-        self.assertEqual(self.cmd(cmd="hdr-white", nits=300), (200, {"result": None}))
-        self.app.shell.send.assert_called_once_with("hdr-white 300")
-        self.app.on_shell_exit(1)
-        self.assertEqual(self.app.shell.start.call_args.args[1]["ORIEL_HDR_WHITE"], "300")
-        self.assertEqual(self.app.server.state["hdrWhite"], 300)
-        self.assertEqual(json.loads((self.directory / "settings.json").read_text()), {"hdrWhite": 300})
 
     def test_cpu_rendering_restarts_the_shell_with_it(self):
         self.assertEqual(self.cmd(cmd="cpu-rendering", on="yes"), (400, {"error": "on must be true or false", "code": "invalid"}))
@@ -162,11 +153,11 @@ class AppTests(unittest.TestCase):
         self.cmd(cmd="add", amount=2)
         self.cmd(cmd="refuse")
         self.cmd(cmd="fail")
-        self.cmd(cmd="hdr-white", nits=300)
+        self.cmd(cmd="cpu-rendering", on=False)
         text = self.log_path.read_text()
         self.assertIn(" command add\n", text)
         self.assertNotIn("'amount': 2", text)
-        self.assertIn(" command hdr-white {'nits': 300}\n", text)
+        self.assertIn(" command cpu-rendering {'on': False}\n", text)
         self.assertIn(" command refuse refused: no playback\n", text)
         self.assertEqual(text.count("Traceback"), 1)
 

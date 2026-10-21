@@ -74,11 +74,6 @@ HIDE_DELAY = 0.2
 # How long the page waits for a command's reply.
 COMMAND_TIMEOUT = 10
 
-# Graphics white in nits on HDR output: BT.2408's reference white by
-# default, within the range the shell accepts.
-HDR_WHITE = 203
-HDR_WHITE_RANGE = (80, 1000)
-
 
 def now():
     return time.monotonic()
@@ -197,7 +192,6 @@ class App:
     def state(self):
         """The page's state; extend it."""
         return {
-            "hdrWhite": self.settings.get("hdrWhite", HDR_WHITE),
             "cpuRendering": self.settings.get("cpuRendering", False),
             "screensaver": self.screensaver,
         }
@@ -221,12 +215,10 @@ class App:
         threading.Thread(target=self.tick, name="oriel-tick", daemon=True).start()
 
     def shell_env(self):
-        """WebKit's environment, from the current settings: a restarted shell
-        must get the HDR white set since the first start."""
+        """WebKit's environment, from the current settings."""
         env = {}
         if self.dev.get("inspector"):
             env["WEBKIT_INSPECTOR_HTTP_SERVER"] = self.dev["inspector"]
-        env["ORIEL_HDR_WHITE"] = str(self.settings.get("hdrWhite", HDR_WHITE))
         if self.settings.get("cpuRendering", False):
             env["WEBKIT_SKIA_ENABLE_CPU_RENDERING"] = "1"
         env.update(self.dev.get("env", {}))
@@ -343,16 +335,6 @@ class App:
     @command("exit")
     def page_exit(self):
         self.close()
-
-    @command("hdr-white", log=True)
-    def page_hdr_white(self, nits):
-        low, high = HDR_WHITE_RANGE
-        if not isinstance(nits, (int, float)) or not low <= nits <= high:
-            raise CommandError(f"nits must be {low} to {high}", "invalid")
-        self.settings["hdrWhite"] = int(nits)
-        config.save_settings(self.settings)
-        self.shell.send(f"hdr-white {int(nits)}")
-        self.publish()
 
     @command("cpu-rendering", log=True)
     def page_cpu_rendering(self, on):
