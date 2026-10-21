@@ -28,7 +28,7 @@ resources/mark.png  optional: shown on black until the page's first frame
 ```xml
 <requires>
   <import addon="xbmc.python" version="3.1.0"/>
-  <import addon="script.module.oriel.framework" version="0.2.0"/>
+  <import addon="script.module.oriel.framework" version="0.3.0"/>
 </requires>
 <extension point="xbmc.python.script" library="default.py">
   <provides>executable</provides>
