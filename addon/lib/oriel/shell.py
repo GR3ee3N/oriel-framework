@@ -55,7 +55,11 @@ class Shell:
         argv = [
             "/usr/bin/python3", config.OVERLAY, stage, config.SHELL,
             "--control", config.CTL,
-            "--feature", "PropagateDamagingInformation=1", url,
+            # WebKit tracks what changed in the page and redraws only that.
+            "--feature", "PropagateDamagingInformation=1",
+            "--feature", "UseDamagingInformationForCompositing=1",
+            # Separate damage rects, not one bounding box (WPE 2.54's default).
+            "--feature", "UnifyDamagedRegions=0", url,
         ]
         self.process = subprocess.Popen(
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
