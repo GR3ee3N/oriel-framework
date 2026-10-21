@@ -1,9 +1,9 @@
 # Oriel framework
 
-Oriel framework runs web apps over Kodi on CoreELEC. WPE WebKit renders the
-interface on a separate display plane while Kodi handles video playback
-underneath. The framework connects the web interface to Kodi and forwards
-remote control input to the page.
+Oriel framework runs web apps in Kodi on CoreELEC. WPE WebKit renders the
+interface and Oriel display (`vfs.oriel.display`) draws it in Kodi's own GUI
+frame, also over video. The framework connects the web interface to Kodi
+and forwards remote control input to the page.
 
 It has two parts:
 
@@ -12,8 +12,8 @@ It has two parts:
 - `@oriel/web` — the TypeScript package for communication with the add-on,
   saved settings, playback controls and remote navigation.
 
-The WebKit runtime is provided by
-[Oriel WebKit](https://github.com/GR3ee3N/oriel-webkit).
+The framework depends on the Oriel WebKit runtime and the Oriel display
+binary add-on. Apps depend only on the framework.
 
 ## Status
 
@@ -38,7 +38,8 @@ Other devices and CoreELEC versions have not been tested.
 ## Installation
 
 Install [Oriel WebKit](https://github.com/GR3ee3N/oriel-webkit#installation)
-using the installation instructions in its repository. Then download
+and [Oriel display](https://github.com/GR3ee3N/oriel-display#installation)
+for Kodi 22. Then download
 `script.module.oriel.framework-<version>.zip` from the
 [releases page](https://github.com/GR3ee3N/oriel-framework/releases).
 
@@ -64,9 +65,14 @@ or compile the shell. `build.sh` builds the ARM64 shell, checks its library
 requirements and stages the add-on. Both commands work from an extracted source
 archive without Git metadata.
 
-The shell builds against the WebKit development package selected by
-`WEBKIT_VERSION` in `build/versions.env`. The framework add-on requires that
-WebKit version or newer. Downloads and build caches are kept in `.cache`.
+The shell builds against the WebKit development package and display protocol
+package selected by `WEBKIT_VERSION` and `DISPLAY_VERSION` in
+`build/versions.env`. The framework add-on requires those add-on versions or
+newer. Downloads and build caches are kept in `.cache`.
+
+For an unpublished display build, set `DISPLAY_DEV` to its staged
+`.cache/runtime/protocol` directory. `WEBKIT_DEV` similarly accepts a WebKit
+development package directory. Neither requires a particular checkout layout.
 
 The built add-on is written to
 `.cache/runtime/script.module.oriel.framework`.
@@ -91,16 +97,16 @@ BOX=root@coreelec.local tools/deploy.sh
 Replace `root@coreelec.local` with the device's SSH address. Deployment requires
 SSH, rsync and Kodi's JSON-RPC TCP service to verify add-on activation.
 The script installs the framework and its box tools (`tools/box`); install
-WebKit separately through Kodi or its deployment script. `--example` also
-installs the example app. Reopen any running Oriel app to load the updated
-framework.
+WebKit and Oriel display separately through Kodi or their deployment scripts.
+`--example` also installs the example app. Reopen any running Oriel app to
+load the updated framework.
 
 ## Releasing
 
-Bump `VERSION` in `build/versions.env`. Update `WEBKIT_VERSION` when building
-against a new, published WebKit release, and commit the changes. Build and
-publish from a clean working tree using the GitHub CLI (`gh`), authenticated
-with an account that can publish releases:
+Bump `VERSION` in `build/versions.env`. Update `WEBKIT_VERSION` and
+`DISPLAY_VERSION` when building against new published releases, and commit
+the changes. Build and publish from a clean working tree using the GitHub CLI
+(`gh`), authenticated with an account that can publish releases:
 
 ```sh
 tools/release.sh "Release notes"
@@ -108,5 +114,5 @@ tools/release.sh "Release notes"
 
 `release.sh` checks, builds and packages a snapshot of the committed source,
 then uploads the files in `.cache/release` as a draft under `v<version>`.
-It refuses uncommitted changes, a local `WEBKIT_DEV` override, or a checkout
-that changes while the release runs.
+It refuses uncommitted changes, local `WEBKIT_DEV` or `DISPLAY_DEV` overrides,
+or a checkout that changes while the release runs.

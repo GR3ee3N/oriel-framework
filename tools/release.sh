@@ -5,6 +5,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO"
 [[ $# = 1 && -n $1 ]] || { echo 'usage: tools/release.sh "Release notes"' >&2; exit 2; }
 [[ -z ${WEBKIT_DEV:-} ]] || { echo "releases require the published WebKit runtime; unset WEBKIT_DEV" >&2; exit 2; }
+[[ -z ${DISPLAY_DEV:-} ]] || { echo "releases require the published display protocol; unset DISPLAY_DEV" >&2; exit 2; }
 export GH_REPO=GR3ee3N/oriel-framework
 set -a
 source build/versions.env

@@ -54,7 +54,7 @@ class Shell:
         }
         argv = [
             "/usr/bin/python3", config.OVERLAY, stage, config.SHELL,
-            "--fb", "/dev/fb1", "--control", config.CTL,
+            "--control", config.CTL,
             "--feature", "PropagateDamagingInformation=1", url,
         ]
         self.process = subprocess.Popen(

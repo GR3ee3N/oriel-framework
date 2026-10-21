@@ -2,13 +2,11 @@
 //! so keys come through here too.
 //!
 //!     key <evdev code> [sent]   sent: the add-on's CLOCK_MONOTONIC time
-//!     hide | show
-//!     hdr-white <nits>
 //!     quit
 //!
 //! Opened read-write, so it doesn't hit EOF when the add-on's writer closes.
 
-use crate::fb;
+use crate::monotonic;
 use std::cell::RefCell;
 use std::ffi::{c_int, c_uint, c_void};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -86,23 +84,23 @@ fn command(view: *mut wpe::WPEView, line: &str) {
     let mut words = line.split_whitespace();
     match (words.next(), words.next().and_then(|w| w.parse::<u16>().ok())) {
         (Some("key"), Some(code)) => {
-            let now = fb::monotonic();
+            let now = monotonic();
             let sent = words.next().and_then(|w| w.parse::<f64>().ok());
             let late = sent.map(|s| format!(" relay={:.2}ms", (now - s) * 1e3)).unwrap_or_default();
             println!("oriel-shell: key code={code} t={now:.6}{late}");
             press(view, code);
         }
-        (Some("hide"), _) => fb::set_hidden(true),
-        (Some("show"), _) => fb::set_hidden(false),
-        (Some("quit"), _) => fb::quit(),
-        (Some("hdr-white"), Some(nits)) => fb::set_hdr_white(f32::from(nits)),
+        (Some("quit"), _) => {
+            println!("oriel-shell: exit t={:.6}", monotonic());
+            std::process::exit(0);
+        }
         _ => eprintln!("oriel-shell: control: unknown command {line:?}"),
     }
 }
 
 /// `code` is an evdev code, mapped by addon/xkb.
 fn press(view: *mut wpe::WPEView, code: u16) {
-    let time = (fb::monotonic() * 1000.0) as u32;
+    let time = (monotonic() * 1000.0) as u32;
     let keycode = c_uint::from(code) + 8;
     for kind in [wpe::WPE_EVENT_KEYBOARD_KEY_DOWN, wpe::WPE_EVENT_KEYBOARD_KEY_UP] {
         unsafe {
@@ -118,7 +116,8 @@ fn press(view: *mut wpe::WPEView, code: u16) {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
             );
-            let event = wpe::wpe_event_keyboard_new(kind, view, wpe::WPE_INPUT_SOURCE_KEYBOARD, time, 0, keycode, keyval);
+            let event =
+                wpe::wpe_event_keyboard_new(kind, view, wpe::WPE_INPUT_SOURCE_KEYBOARD, time, 0, keycode, keyval);
             wpe::wpe_view_event(view, event);
             wpe::wpe_event_unref(event);
         }

@@ -43,11 +43,11 @@ def checksum(file):
 
 
 def versions():
-    return os.environ["VERSION"], os.environ["WEBKIT_VERSION"]
+    return os.environ["VERSION"], os.environ["WEBKIT_VERSION"], os.environ["DISPLAY_VERSION"]
 
 
 def package(runtime, source, licenses, destination):
-    v, w = versions()
+    v, w, d = versions()
     url = f"https://github.com/{GITHUB}/releases/download/v{v}/{source.name}.tar.xz"
     stage = destination / "packages"
     files = destination / "files"
@@ -80,7 +80,7 @@ def package(runtime, source, licenses, destination):
     tar_tree(source, files / f"{source.name}.tar.xz")
     # Kodi's index is served from the latest release alongside the zip it names.
     addons = ET.Element("addons")
-    element = ET.fromstring((REPO / "addon/addon.xml").read_text().replace("@VERSION@", v).replace("@WEBKIT_VERSION@", w).encode())
+    element = ET.fromstring((REPO / "addon/addon.xml").read_text().replace("@VERSION@", v).replace("@WEBKIT_VERSION@", w).replace("@DISPLAY_VERSION@", d).encode())
     ET.SubElement(element.find('extension[@point="xbmc.addon.metadata"]'), "path").text = zip_name
     addons.append(element)
     ET.indent(addons)
@@ -93,7 +93,7 @@ def main():
     commit, snapshot = sys.argv[1:]
     rust = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
     runtime = REPO / ".cache/runtime"
-    v, w = versions()
+    v, w, d = versions()
     destination = REPO / ".cache/release.next"
     if destination.exists():
         shutil.rmtree(destination)
@@ -102,6 +102,10 @@ def main():
     with tarfile.open(snapshot) as archive:
         archive.extractall(source, filter="data")
     project = source / "oriel-framework"
+    # Path dependencies are not included by cargo vendor.
+    display = REPO / ".cache/display"
+    shutil.copytree(display / "protocol", project / ".cache/display/protocol")
+    shutil.copy(display / f"oriel-display-{d}-protocol.tar.xz", project / ".cache/display")
     vendor = project / "vendor"
     cargo_config = subprocess.check_output(["cargo", "vendor", "--locked", "--versioned-dirs", str(vendor)], text=True, cwd=project)
     (project / ".cargo").mkdir(exist_ok=True)
@@ -125,6 +129,10 @@ def main():
         (licenses / "cargo" / crate.name).mkdir(parents=True)
         for file in found:
             shutil.copy(file, licenses / "cargo" / crate.name / file.name)
+
+    protocol_license = licenses / "cargo/oriel-display-protocol"
+    protocol_license.mkdir(parents=True)
+    shutil.copy(display / "protocol/LICENSE", protocol_license / "LICENSE")
 
     package(runtime, source, licenses, destination)
     # tools/release.sh publishes only packages of the commit it releases.

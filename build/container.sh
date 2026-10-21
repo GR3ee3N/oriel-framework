@@ -22,7 +22,12 @@ if [[ $1 != build/check.sh && -n ${WEBKIT_DEV:-} ]]; then
     DEV_MOUNT=(-v "$(cd "$WEBKIT_DEV" && pwd):/webkit-dev:ro" -e WEBKIT_DEV=/webkit-dev)
 fi
 docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" -t oriel-framework-builder -f build/Dockerfile build
+DISPLAY_MOUNT=()
+if [[ $1 != build/check.sh && -n ${DISPLAY_DEV:-} ]]; then
+    [[ -f $DISPLAY_DEV/Cargo.toml && -f $DISPLAY_DEV/LICENSE ]] || { echo "DISPLAY_DEV must be a display build's protocol directory" >&2; exit 2; }
+    DISPLAY_MOUNT=(-v "$(cd "$DISPLAY_DEV" && pwd):/display-dev:ro" -e DISPLAY_DEV=/display-dev)
+fi
 exec docker run --rm --init --user "$(id -u):$(id -g)" \
     -e NPM_CONFIG_CACHE=/work/.cache/npm \
     -e CARGO_HOME=/work/.cache/cargo -e RUSTUP_HOME=/work/.cache/rustup -e CARGO_TARGET_DIR=/work/.cache/cargo-target \
-    "${DEV_MOUNT[@]}" -v "$REPO:/work" -v "$CACHE:/work/.cache" oriel-framework-builder "$@"
+    "${DEV_MOUNT[@]}" "${DISPLAY_MOUNT[@]}" -v "$REPO:/work" -v "$CACHE:/work/.cache" oriel-framework-builder "$@"

@@ -174,9 +174,9 @@ class AppTests(unittest.TestCase):
         self.cmd(cmd="ready")
         sent = self.oriel.now()
         for action in (3, 144, 11, self.oriel.ACTION_BUILT_IN_FUNCTION):
-            self.app.on_action(action, sent)
+            self.app.on_action(action, sent, False)
         self.app.page_shown = lambda: False
-        self.app.on_action(4, sent)
+        self.app.on_action(4, sent, False)
         self.assertEqual(self.app.shell.key.call_args_list, [((103, sent),), ((5, sent),)])
 
     def test_command_timeout_has_a_distinct_code(self):
@@ -186,10 +186,17 @@ class AppTests(unittest.TestCase):
 
     def test_failing_stop_hook_still_closes_window(self):
         self.app.fail_stop = True
-        with patch("builtins.open", side_effect=OSError("no fb1")):
-            self.assertEqual(self.cmd(cmd="exit"), (200, {"result": None}))
-        self.app.main.close.assert_called_once()
+        self.assertEqual(self.cmd(cmd="exit"), (200, {"result": None}))
+        self.app.display.stop.assert_called_once()
         self.assertIn(" on_stop failed\n", self.log_path.read_text())
+
+    def test_failed_start_lets_go_of_the_display(self):
+        connection = Mock()
+        with patch.object(self.oriel.display, "connect", return_value=connection), \
+                patch.object(self.oriel, "Server", side_effect=OSError("port taken")), \
+                self.assertRaises(OSError):
+            self.oriel.App()
+        connection.stop.assert_called_once()
 
     def test_tick_stops_once_the_app_exits(self):
         waits = lambda monitor, timeout: time.sleep(0.01) or False

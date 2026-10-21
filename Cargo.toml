@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 glib = "0.22"
 wpe-sys = { path = "crates/wpe-sys" }
+oriel-display-protocol = { path = ".cache/display/protocol" }
 
 [profile.release]
 lto = "thin"

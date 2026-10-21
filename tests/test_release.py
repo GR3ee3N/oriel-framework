@@ -100,12 +100,15 @@ printf 'check\\n' >> "$ORIEL_CACHE/stages"
             self.assertEqual(config["source"]["crates-io"]["replace-with"], "vendored-sources")
             self.assertEqual(config["source"]["vendored-sources"]["directory"], "vendor")
             self.assertEqual(archive.extractfile(f"{prefix}/oriel-framework/vendor/example-1.0/LICENSE").read(), b"Cargo license")
+            self.assertEqual(archive.extractfile(f"{prefix}/oriel-framework/.cache/display/protocol/LICENSE").read(), b"Protocol license")
+            self.assertIn(f"{prefix}/oriel-framework/.cache/display/oriel-display-{self.d}-protocol.tar.xz", archive.getnames())
 
     def test_dirty_checkout_and_dev_runtime_are_refused_before_build(self):
         (self.root / "CHANGES").write_text("uncommitted")
         self.assertIn("not clean", self.release(success=False))
         (self.root / "CHANGES").unlink()
         self.assertIn("unset WEBKIT_DEV", self.release(success=False, WEBKIT_DEV="dev"))
+        self.assertIn("unset DISPLAY_DEV", self.release(success=False, DISPLAY_DEV="dev"))
         self.assertEqual(self.data()["releases"], {})
         self.assertFalse((self.root / ".cache/stages").exists())
 

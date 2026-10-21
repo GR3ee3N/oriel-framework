@@ -4,6 +4,7 @@
   <requires>
     <import addon="xbmc.python" version="3.1.0"/>
     <import addon="script.module.oriel.webkit" version="@WEBKIT_VERSION@"/>
+    <import addon="vfs.oriel.display" version="@DISPLAY_VERSION@"/>
   </requires>
   <extension point="xbmc.python.module" library="lib"/>
   <extension point="xbmc.addon.metadata">

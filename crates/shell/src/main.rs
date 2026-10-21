@@ -1,6 +1,7 @@
-//! Shows one page full screen with WPE WebKit, over Kodi.
+//! Shows one page full screen with WPE WebKit, drawn by Kodi through
+//! vfs.oriel.display.
 //!
-//!     oriel-shell --fb /dev/fbN --control FIFO [--feature Name=0|1]... <uri>
+//!     oriel-shell --control FIFO [--feature Name=0|1]... <uri>
 //!     oriel-shell --list-features
 //!
 //! The page's background is transparent, so Kodi shows wherever it draws
@@ -10,23 +11,29 @@
 //! exits with status 3.
 
 mod control;
-mod fb;
-mod gl;
+mod display;
 
 use glib::prelude::*;
 use glib::translate::{FromGlibPtrFull, ToGlibPtr, from_glib};
 use std::ptr;
 use wpe_sys as wpe;
 
+/// Kodi's GUI resolution, which the add-on scales to the output.
+const SIZE: (i32, i32) = (1920, 1080);
+
+pub fn monotonic() -> f64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9
+}
+
 fn main() {
-    let mut fb_path: Option<String> = None;
     let mut control_path: Option<String> = None;
     let mut uri = "about:blank".to_owned();
     let mut features: Vec<(String, bool)> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--fb" => fb_path = Some(args.next().expect("--fb /dev/fbN")),
             "--control" => control_path = Some(args.next().expect("--control FIFO")),
             "--list-features" => {
                 for (name, default) in all_features().iter().map(|(n, d, _)| (n, d)) {
@@ -43,14 +50,13 @@ fn main() {
         }
     }
 
-    let (Some(fb_path), Some(control_path)) = (fb_path, control_path) else {
-        eprintln!("oriel-shell: --fb and --control are required");
+    let Some(control_path) = control_path else {
+        eprintln!("oriel-shell: --control is required");
         std::process::exit(2);
     };
-    let (width, height) = fb::open(&fb_path).unwrap_or_else(|e| {
-        eprintln!("oriel-shell: cannot open {fb_path}: {e}");
-        std::process::exit(1);
-    });
+    // The add-on reads a buffer as soon as it gets it, so WebKit must only
+    // hand over finished ones (see display.rs). Set before any thread starts.
+    unsafe { std::env::set_var("WPE_USE_EXPLICIT_SYNC", "0") };
 
     let display = unsafe {
         let display = wpe::wpe_display_headless_new();
@@ -85,11 +91,14 @@ fn main() {
 
         let wpe_view = wpe::webkit_web_view_get_wpe_view(web_view);
         let toplevel = wpe::wpe_view_get_toplevel(wpe_view);
-        wpe::wpe_toplevel_resize(toplevel, width, height);
+        wpe::wpe_toplevel_resize(toplevel, SIZE.0, SIZE.1);
         wpe::wpe_toplevel_fullscreen(toplevel);
         wpe::wpe_view_map(wpe_view);
         wpe::wpe_view_focus_in(wpe_view);
-        fb::install(wpe_view);
+        display::install(wpe_view).unwrap_or_else(|e| {
+            eprintln!("oriel-shell: vfs.oriel.display: {e}");
+            std::process::exit(display::GONE);
+        });
         control::install(wpe_view, &control_path).unwrap_or_else(|e| {
             eprintln!("oriel-shell: control {control_path}: {e}");
             std::process::exit(1);

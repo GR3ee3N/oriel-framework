@@ -25,6 +25,7 @@ class PackageTests(RepositoryTests):
             self.assertIn(f"Oriel WebKit {self.w}", archive.read("script.module.oriel.framework/THIRD-PARTY-NOTICES.txt").decode())
             addon = ET.fromstring(archive.read("script.module.oriel.framework/addon.xml"))
             self.assertEqual(addon.find("requires/import[@addon='script.module.oriel.webkit']").get("version"), self.w)
+            self.assertEqual(addon.find("requires/import[@addon='vfs.oriel.display']").get("version"), self.d)
 
     def test_web_package_has_version_sources_and_license(self):
         with tarfile.open(self.files / f"oriel-web-{self.v}.tgz") as archive:

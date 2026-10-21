@@ -3,11 +3,7 @@
 
     {"url": "http://<pc>:5173/",        load the page from the dev server
      "inspector": "0.0.0.0:9226",       WebKit's remote inspector
-     "env": {"ORIEL_FB_TRACE": "1"}}    extra environment for the shell
-
-The shell's debug switches for "env": ORIEL_FB_TRACE logs every frame, and
-ORIEL_TRANSFER_OVERRIDE names a file holding "sdr", "hlg" or "pq [nits]"
-to use instead of the HDMI output's transfer.
+     "env": {"NAME": "value"}}          extra environment for the shell
 """
 import json
 import os

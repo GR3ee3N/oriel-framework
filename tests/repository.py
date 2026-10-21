@@ -26,12 +26,13 @@ class RepositoryTests(unittest.TestCase):
         self.bin = self.temporary / "bin"
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", TEST_ROOT=str(self.root))
-        for name in ("WEBKIT_DEV", "ORIEL_CACHE"):
+        for name in ("WEBKIT_DEV", "DISPLAY_DEV", "ORIEL_CACHE"):
             self.env.pop(name, None)
         versions = dict(line.split("=", 1) for line in (self.root / "build/versions.env").read_text().splitlines()
                         if line and not line.startswith("#"))
         self.enterContext(patch.dict(os.environ, versions))
         self.v, self.w = versions["VERSION"], versions["WEBKIT_VERSION"]
+        self.d = versions["DISPLAY_VERSION"]
 
     def executable(self, name, text):
         path = self.bin / name
@@ -64,7 +65,7 @@ class RepositoryTests(unittest.TestCase):
         shutil.copytree(self.root / "addon", addon)
         (addon / "bin/oriel-shell").write_text("shell")
         xml = addon / "addon.xml"
-        xml.write_text(xml.read_text().replace("@VERSION@", self.v).replace("@WEBKIT_VERSION@", self.w))
+        xml.write_text(xml.read_text().replace("@VERSION@", self.v).replace("@WEBKIT_VERSION@", self.w).replace("@DISPLAY_VERSION@", self.d))
         licenses = self.root / ".cache/licenses"
         for name in ("rust/COPYRIGHT-library.html", "cargo/example-1.0/LICENSE"):
             path = licenses / name
@@ -132,3 +133,9 @@ else:
         archive.parent.mkdir()
         with tarfile.open(archive, "w:xz") as tar:
             tar.add(dev, arcname="dev")
+        protocol = self.root / ".cache/display/protocol"
+        protocol.mkdir(parents=True)
+        (protocol / "Cargo.toml").write_text(f'[package]\nname = "oriel-display-protocol"\nversion = "{self.d}"\n')
+        (protocol / "LICENSE").write_text("Protocol license")
+        with tarfile.open(protocol.parent / f"oriel-display-{self.d}-protocol.tar.xz", "w:xz") as tar:
+            tar.add(protocol, arcname="protocol")

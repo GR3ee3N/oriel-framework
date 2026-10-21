@@ -1,8 +1,8 @@
 # Writing an app
 
 An Oriel app is a Kodi add-on with two halves: Python that subclasses
-`oriel.App` and runs on Kodi's side, and a web page that WPE WebKit shows
-over Kodi. They talk over HTTP on `127.0.0.1:32499`: the add-on publishes
+`oriel.App` and runs on Kodi's side, and a web page that WPE WebKit renders
+and Kodi draws in its own GUI. They talk over HTTP on `127.0.0.1:32499`: the add-on publishes
 its state to the page, and the page sends it commands.
 
 Everything listed here is the public interface. Anything else in
@@ -34,6 +34,10 @@ resources/mark.png  optional: shown on black until the page's first frame
   <provides>executable</provides>
 </extension>
 ```
+
+The framework imports `script.module.oriel.webkit` and `vfs.oriel.display`;
+apps do not import them directly. The display add-on owns the browse window
+and playback dialog, while Python keeps the input and playback policy.
 
 A path that isn't a file and has no extension gets `index.html`, so the
 page can use its own routes.
@@ -82,14 +86,15 @@ and use these:
 | `own_screensaver` | Class attribute, default False: Kodi's screensaver runs and the page is hidden while it is up. True holds Kodi's screensaver off; the state's `screensaver` is then Kodi's delay in minutes (null if Kodi's screensaver is off), for the page's own. |
 | `data_dir` | The app's `addon_data` directory. |
 | `publish()` | Sends `state()` to the page. Call it after the state changes. |
-| `events` | A queue. `events.put((kind, *args))` from any thread calls `on_event(kind, args)` on the controller thread. Kinds the framework uses: `key`, `page`, `tick`, `hide`, `shell-exit`, `sleep`, `abort`, and `VideoApp`'s `started` and `ended`. |
+| `events` | A queue. `events.put((kind, *args))` from any thread calls `on_event(kind, args)` on the controller thread. Kinds the framework uses: `key`, `page`, `tick`, `hide`, `shell-exit`, `restart-shell`, `sleep`, `abort`, `display-window`, `display-gone`, and `VideoApp`'s `started` and `ended`. |
 | `close()` | Closes the app. |
 
 `App.__init__` takes no arguments. An override calls `super().__init__()`
 first.
 
 The app closes when the page sends `exit`, Kodi leaves the app's window
-(Home, say), the box goes to sleep, or the shell exits normally.
+(Home, say), the box goes to sleep, the shell exits normally, or the display
+add-on is unloaded.
 
 A web-process crash reloads the page. Three crashes within one minute
 terminate the shell. The framework restarts a failed shell at most twice
@@ -161,9 +166,9 @@ changes anything: a value of the wrong type or out of range is `invalid`.
 
 ### Keys
 
-Kodi keeps the remote. The app's window receives each key, the framework
-names it and calls `on_key`, and unless that returns True the key reaches
-the page as a `KeyboardEvent`:
+The window showing the page receives each key, the
+framework names it and calls `on_key`, and unless that returns True the key
+reaches the page as a `KeyboardEvent`:
 
 | Key | DOM `key` |
 |---|---|
@@ -176,15 +181,17 @@ the page as a `KeyboardEvent`:
 | `next`, `previous` | `MediaTrackNext`, `MediaTrackPrevious` |
 | `fastforward`, `rewind` | `MediaFastForward`, `MediaRewind` |
 | `pageup`, `pagedown` | `PageUp`, `PageDown` |
-| `0` to `9` | `0` to `9` |
+| `2` to `9` | `2` to `9` |
+
+Digits 0 and 1 are not available.
 
 Keys reach neither `on_key` nor the page before `ready`, or while
-`VideoApp` hides the page during playback. The colour buttons and channel up/down aren't
-available: Kodi's default keymaps send the colour buttons to other windows
-and channel up/down as page up/down.
+`VideoApp` hides the page during playback. The colour buttons and channel
+up/down aren't available.
 
-During playback Kodi keeps Play/Pause, Stop, Fast-forward, Rewind and
-Previous for itself in every window, so `VideoApp` doesn't pass them on.
+During playback, `vfs.oriel.display` flags Play/Pause, Stop, Fast-forward,
+Rewind and Previous as keys Kodi also acts on, and `VideoApp` doesn't pass
+those on.
 
 ### `oriel.video.VideoApp`
 
@@ -307,6 +314,18 @@ set `resolve.dedupe: ['solid-js']` so the app and the package share one Solid.
 | `uuid()` | A UUID, also outside secure contexts. |
 | `ORIGIN` | The add-on's origin: empty in a build, `http://127.0.0.1:32499` under Vite's dev server. |
 
+### Drawing over video
+
+The shell passes WebKit's dma-bufs to `vfs.oriel.display`. Its rendering
+control imports them as textures and draws the newest page in Kodi's GUI
+frame. A full-screen animation costs WebKit rendering and a full-screen
+texture draw in every frame, which must fit the frame budget.
+
+A non-passive Kodi dialog hides the page until it closes.
+
+An app doesn't start without the display add-on; Kodi shows a notification
+instead.
+
 ## Development
 
 ### Dev settings
@@ -321,8 +340,7 @@ set `resolve.dedupe: ['solid-js']` so the app and the package share one Solid.
   add-on then allows that origin on `/api`, and the page must address the
   add-on at `http://127.0.0.1:32499` (`ORIGIN` does this under Vite).
 - `inspector` turns on WebKit's remote inspector at that address.
-- `env` sets environment variables for the shell; the debug switches are
-  described in `addon/lib/oriel/config.py`.
+- `env` sets environment variables for the shell.
 
 ### Logs and files
 
@@ -333,4 +351,4 @@ In the app's `addon_data` directory:
 - `store.json`: the page's saved settings.
 
 Both logs start over each time the app opens. The framework's own settings
-(HDR white) are in `addon_data/script.module.oriel.framework/settings.json`.
+(HDR white, CPU rendering) are in `addon_data/script.module.oriel.framework/settings.json`.

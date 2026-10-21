@@ -86,7 +86,7 @@ class VideoTests(unittest.TestCase):
         app.player = Mock()
         app.publish = Mock()
         app.hide_later = Mock()
-        app.show_plane = Mock()
+        app.show_page = Mock()
         app.close_osd = Mock()
         app.stop_playback = Mock()
         return app
@@ -95,6 +95,24 @@ class VideoTests(unittest.TestCase):
         app = self.app_in("browse")
         self.assertEqual(set(app.commands), {"ready", "exit", "hdr-white", "cpu-rendering", "media-source", "play",
                                              "osd-on", "osd-off", "set-paused", "stop", "seek-to", "audio", "subtitle"})
+
+    def test_keys_kodi_acts_on_only_show_the_osd(self):
+        for phase, key, kodi, kept, osd in (
+            ("playing", "playpause", True, True, True), ("playing", "stop", True, True, False),
+            ("osd", "playpause", True, True, False), ("osd", "playpause", False, False, False),
+            ("playing", "select", False, True, True), ("browse", "playpause", False, False, False),
+        ):
+            with self.subTest(phase=phase, key=key, kodi=kodi):
+                app = self.app_in(phase)
+                app.show_osd = Mock()
+                self.assertEqual(app.intercept_key(key, self.oriel.now(), kodi), kept)
+                self.assertEqual(app.show_osd.called, osd)
+                app.stop_playback.assert_not_called()
+
+    def test_back_during_playback_stops_it(self):
+        app = self.app_in("playing")
+        self.assertTrue(app.intercept_key("back", self.oriel.now(), False))
+        app.stop_playback.assert_called_once()
 
     def tracks_app(self, phase, kodi):
         app = self.app_in(phase)
@@ -106,8 +124,7 @@ class VideoTests(unittest.TestCase):
     def start(self, kodi, **streams):
         app = self.tracks_app("loading", kodi)
         app.start_streams = streams
-        with patch.object(self.video.threading, "Thread"):
-            app.on_started()
+        app.on_started()
         kodi.process()
         self.assertEqual(app.phase, "playing")
         return app
@@ -192,8 +209,7 @@ class VideoTests(unittest.TestCase):
         app = self.tracks_app("osd", kodi)
         app.page_subtitle(index=-1)
         kodi.process()
-        with patch.object(self.video.threading, "Thread"):
-            app.page_play("/next.mkv", session="two", audio=0, subtitle=2)
+        app.page_play("/next.mkv", session="two", audio=0, subtitle=2)
         # Kodi opened the new file with subtitle 2 showing.
         kodi.enabled = kodi.demuxed = True
         app.on_started()
@@ -221,13 +237,12 @@ class VideoTests(unittest.TestCase):
                 app = self.app_in("osd")
                 app.player_state = self.video.player_state(state, session=previous)
                 app.media_url = lambda path: path
-                with patch.object(self.video.threading, "Thread"):
-                    for _ in range(plays):
-                        app.page_play("/movie.mkv", session=session, position=120, streamOffset=120, subtitle=-1)
-                    app.on_started()
+                for _ in range(plays):
+                    app.page_play("/movie.mkv", session=session, position=120, streamOffset=120, subtitle=-1)
+                app.on_started()
                 self.assertEqual(app.player.pause.called, paused)
                 self.assertEqual(app.phase, "osd" if paused else "playing")
-                self.assertEqual(app.show_plane.called, paused)
+                self.assertEqual(app.show_page.called, paused)
                 self.assertEqual(app.player.play.call_count, plays)
 
     def test_pause_sets_desired_state(self):
@@ -242,9 +257,8 @@ class VideoTests(unittest.TestCase):
         app.media_url = lambda path: path
         app.player.getTime.return_value = 30
         app.player.getTotalTime.return_value = 0
-        with patch.object(self.video.threading, "Thread"):
-            app.page_play("/transcode.mkv", session="one", position=600, streamOffset=600, duration=5400)
-            app.on_started()
+        app.page_play("/transcode.mkv", session="one", position=600, streamOffset=600, duration=5400)
+        app.on_started()
         app.poll()
         self.assertEqual((app.player_state["time"], app.player_state["duration"]), (630, 5400))
         app.page_seek_to(660)

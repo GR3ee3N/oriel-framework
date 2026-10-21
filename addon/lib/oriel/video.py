@@ -7,13 +7,13 @@ subtitle, osd-on, osd-off. They set a state rather than toggle one, and
 succeed without doing anything when it already holds. A relative path (`/…`) plays from the media source through
 the proxy (proxy.py), which adds its headers; an absolute URL plays as it is.
 Times are in the item's timeline: a stream that begins into the item (a
-transcode, say) gives its `streamOffset`. Kodi keeps its player keys during
-playback (KODI_KEYS); any other key there shows the page as the OSD.
+transcode, say) gives its `streamOffset`. Kodi also acts on its player keys
+during playback (the key's kodi flag); any other key there shows the page as
+the OSD.
 
 Close the playback dialog before stopping playback; closing it while Kodi
 stops hangs Kodi's GUI.
 """
-import threading
 import traceback
 from urllib.parse import urlsplit
 
@@ -21,7 +21,7 @@ import xbmc
 import xbmcgui
 
 from . import config, device
-from .app import ADDON_WINDOWS, App, CommandError, Keys, command, jsonrpc, kodi_setting, now, window
+from .app import App, CommandError, command, jsonrpc, kodi_setting, now
 from .log import log
 from .proxy import ProxyProcess
 
@@ -32,9 +32,6 @@ KEEP = "keep"
 
 # Back stops playback, unless the OSD only just closed: that Back was meant for it.
 BACK_GRACE = 1.0
-# Kodi handles these itself in any window during playback, so we don't do
-# them twice. Previous seeks to the start.
-KODI_KEYS = ("playpause", "stop", "fastforward", "rewind", "previous")
 # Kodi's "Adjust display refresh rate: On start / stop": playback's end puts
 # the output back in the mode it had before.
 REFRESH_ON_START_STOP = 2
@@ -110,10 +107,6 @@ class Player(xbmc.Player):
         self.events.put(("ended", "error"))
 
 
-class Osd(Keys, xbmcgui.WindowXMLDialog):
-    pass
-
-
 class VideoApp(App):
     def __init__(self):
         super().__init__()
@@ -133,9 +126,8 @@ class VideoApp(App):
         self.loading_since = 0.0
         self.replaced_at = -1e9
         self.played_url = None
-        self.osd_window = window(Osd, "oriel-player.xml", self.events)
-        self.osd_thread = None
-        self.osd_dialog_id = None
+        # vfs.oriel.display's player window is up.
+        self.osd_open = False
         self.osd_off_at = 0.0
         self.player = Player(self.events)
         self.idle = 0
@@ -306,9 +298,9 @@ class VideoApp(App):
         self.require("playing")
         self.show_osd()
 
-    def intercept_key(self, key, sent):
-        if self.phase in ("playing", "osd") and key in KODI_KEYS:
-            # Kodi already does it. A stop ends through on_ended, after Kodi's stop.
+    def intercept_key(self, key, sent, kodi):
+        if self.phase in ("playing", "osd") and kodi:
+            # Kodi does it, so we don't do it twice. A stop ends through on_ended, after Kodi's stop.
             if key != "stop" and self.phase == "playing":
                 self.show_osd()
         elif self.phase == "playing" and key == "back":
@@ -328,7 +320,7 @@ class VideoApp(App):
     def show_osd(self):
         self.phase = "osd"
         self.publish()
-        self.show_plane()
+        self.show_page()
 
     def select_tracks(self, audio=None, subtitle=None, file=None):
         """Has Kodi play these tracks. An audio or embedded subtitle switch
@@ -375,8 +367,7 @@ class VideoApp(App):
         self.select_tracks(streams.get("audio"), streams.get("subtitle"), streams.get("subtitleFile"))
         self.phase = "playing"
         self.publish()
-        self.osd_thread = threading.Thread(target=self.osd_window.doModal, name="oriel-osd", daemon=True)
-        self.osd_thread.start()
+        self.open_osd()
         if streams.get("paused"):
             self.player.pause()
             self.show_osd()
@@ -406,30 +397,31 @@ class VideoApp(App):
                 log("waiting for the output to go back to", self.browse_mode)
                 self.show_by = now() + MODE_WAIT
             else:
-                self.show_plane()
+                self.show_page()
 
     def near_end(self):
         # Kodi's end callback comes ~1 s late and can lose to the poll.
         t, d = self.player_state["time"], self.player_state["duration"]
         return d is not None and t >= d - 10
 
-    def close_osd(self):
-        if self.osd_thread:
-            self.osd_window.close()
-            self.osd_thread.join(2)
-            if self.osd_thread.is_alive():
-                log("playback dialog did not close")
-            self.osd_thread = None
+    def open_osd(self):
+        self.osd_open = True
+        self.display.open("player")
 
-    def show_plane(self):
+    def close_osd(self):
+        if self.osd_open:
+            self.osd_open = False
+            self.display.close("player", wait=2)
+
+    def show_page(self):
         if self.show_by is None:
-            super().show_plane()
+            super().show_page()
 
     def poll(self):
         if self.show_by is not None and (output_mode() == self.browse_mode or now() > self.show_by):
             log("output", output_mode(), "- showing the page")
             self.show_by = None
-            self.show_plane()
+            self.show_page()
         if self.phase in ("playing", "osd"):
             # Kodi doesn't always call back when playback ends.
             if not self.player.isPlayingVideo():
@@ -471,13 +463,7 @@ class VideoApp(App):
             subtitleIndex=(r.get("currentsubtitle") or {}).get("index") if r.get("subtitleenabled") else None)
 
     def ours(self, dialog):
-        # Our dialog's id is the first add-on window id seen while it's open.
-        if self.osd_thread is None:
-            return False
-        if self.osd_dialog_id is None and dialog in ADDON_WINDOWS:
-            self.osd_dialog_id = dialog
-            log("our playback dialog id", dialog)
-        return dialog == self.osd_dialog_id
+        return self.osd_open and dialog == self.display.ids.get("player")
 
     def close(self):
         if self.exiting:
@@ -496,7 +482,3 @@ class VideoApp(App):
             log(traceback.format_exc())
         super().close()
         self.proxy.stop()
-
-    def release(self):
-        self.osd_window = None
-        super().release()

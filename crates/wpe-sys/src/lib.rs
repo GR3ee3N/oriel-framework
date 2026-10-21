@@ -2,9 +2,9 @@
 
 #![allow(non_camel_case_types)]
 
-use glib_sys::{GBytes, GError, GType, gboolean};
+use glib_sys::{GError, GType, gboolean};
 use gobject_sys::GObjectClass;
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::{c_char, c_int, c_uint};
 
 macro_rules! opaque {
     ($($name:ident),* $(,)?) => {
@@ -12,8 +12,18 @@ macro_rules! opaque {
     };
 }
 
-opaque!(WebKitWebView, WebKitSettings, WebKitFeature, WebKitFeatureList, WPEDisplay, WPEView, WPEToplevel,
-    WPEBuffer, WPEKeymap, WPEEvent);
+opaque!(
+    WebKitWebView,
+    WebKitSettings,
+    WebKitFeature,
+    WebKitFeatureList,
+    WPEDisplay,
+    WPEView,
+    WPEToplevel,
+    WPEBuffer,
+    WPEKeymap,
+    WPEEvent
+);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -63,7 +73,11 @@ unsafe extern "C" {
     );
 
     pub fn webkit_settings_get_all_features() -> *mut WebKitFeatureList;
-    pub fn webkit_settings_set_feature_enabled(settings: *mut WebKitSettings, feature: *mut WebKitFeature, enabled: gboolean);
+    pub fn webkit_settings_set_feature_enabled(
+        settings: *mut WebKitSettings,
+        feature: *mut WebKitFeature,
+        enabled: gboolean,
+    );
     pub fn webkit_feature_list_get_length(list: *mut WebKitFeatureList) -> usize;
     pub fn webkit_feature_list_get(list: *mut WebKitFeatureList, index: usize) -> *mut WebKitFeature;
     pub fn webkit_feature_get_identifier(feature: *mut WebKitFeature) -> *const c_char;
@@ -84,20 +98,16 @@ unsafe extern "C" {
     pub fn wpe_view_event(view: *mut WPEView, event: *mut WPEEvent);
     pub fn wpe_view_buffer_rendered(view: *mut WPEView, buffer: *mut WPEBuffer);
     pub fn wpe_view_buffer_released(view: *mut WPEView, buffer: *mut WPEBuffer);
-    pub fn wpe_display_get_egl_display(display: *mut WPEDisplay, error: *mut *mut GError) -> *mut c_void;
-    pub fn wpe_buffer_import_to_egl_image(buffer: *mut WPEBuffer, error: *mut *mut GError) -> *mut c_void;
 
     pub fn wpe_buffer_get_width(buffer: *mut WPEBuffer) -> c_int;
     pub fn wpe_buffer_get_height(buffer: *mut WPEBuffer) -> c_int;
-    pub fn wpe_buffer_import_to_pixels(buffer: *mut WPEBuffer, error: *mut *mut GError) -> *mut GBytes;
-    pub fn wpe_buffer_shm_get_type() -> GType;
-    pub fn wpe_buffer_shm_get_data(buffer: *mut WPEBuffer) -> *mut GBytes;
-    pub fn wpe_buffer_shm_get_stride(buffer: *mut WPEBuffer) -> c_uint;
     pub fn wpe_buffer_dma_buf_get_type() -> GType;
     pub fn wpe_buffer_dma_buf_get_fd(buffer: *mut WPEBuffer, plane: c_uint) -> c_int;
     pub fn wpe_buffer_dma_buf_get_offset(buffer: *mut WPEBuffer, plane: c_uint) -> u32;
     pub fn wpe_buffer_dma_buf_get_stride(buffer: *mut WPEBuffer, plane: c_uint) -> u32;
     pub fn wpe_buffer_dma_buf_get_modifier(buffer: *mut WPEBuffer) -> u64;
+    pub fn wpe_buffer_dma_buf_get_format(buffer: *mut WPEBuffer) -> u32;
+    pub fn wpe_buffer_dma_buf_get_n_planes(buffer: *mut WPEBuffer) -> u32;
 
     pub fn wpe_display_get_keymap(display: *mut WPEDisplay) -> *mut WPEKeymap;
     pub fn wpe_keymap_translate_keyboard_state(

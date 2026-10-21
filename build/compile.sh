@@ -5,10 +5,29 @@ cd "$REPO"
 set -a
 source build/versions.env
 set +a
-[[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $WEBKIT_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || { echo "VERSION and WEBKIT_VERSION must be x.y.z" >&2; exit 2; }
+[[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $WEBKIT_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $DISPLAY_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || { echo "VERSION, WEBKIT_VERSION and DISPLAY_VERSION must be x.y.z" >&2; exit 2; }
 CACHE=$REPO/.cache
 export CARGO_HOME=$CACHE/cargo RUSTUP_HOME=$CACHE/rustup CARGO_TARGET_DIR=$CACHE/cargo-target
+DISPLAY_ARCHIVE=$CACHE/display/oriel-display-$DISPLAY_VERSION-protocol.tar.xz
+if [[ -z ${DISPLAY_DEV:-} && ! -f $DISPLAY_ARCHIVE ]]; then
+    curl -fL --create-dirs -o "$DISPLAY_ARCHIVE.part" \
+        "https://github.com/GR3ee3N/oriel-display/releases/download/v$DISPLAY_VERSION/${DISPLAY_ARCHIVE##*/}"
+    mv "$DISPLAY_ARCHIVE.part" "$DISPLAY_ARCHIVE"
+fi
+mkdir -p "$CACHE/display"
+rm -rf "$CACHE/display/protocol"
+if [[ -n ${DISPLAY_DEV:-} ]]; then
+    cp -r "$DISPLAY_DEV" "$CACHE/display/protocol"
+else
+    python3 - "$DISPLAY_ARCHIVE" "$CACHE/display" <<'PY'
+from pathlib import Path
+import sys
+import tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    archive.extractall(Path(sys.argv[2]), filter="data")
+PY
+fi
 DEV_ARCHIVE=$CACHE/webkit/oriel-webkit-$WEBKIT_VERSION-dev.tar.xz
 if [[ -z ${WEBKIT_DEV:-} && ! -f $DEV_ARCHIVE ]]; then
     curl -fL --create-dirs -o "$DEV_ARCHIVE.part" \
@@ -39,5 +58,5 @@ rm -rf "$CACHE/runtime"
 mkdir -p "$ADDON"
 rsync -a --exclude __pycache__ addon/ "$ADDON/"
 install -D -m 755 "$SHELL_BINARY" "$ADDON/bin/oriel-shell"
-sed -i "s/@VERSION@/$VERSION/g; s/@WEBKIT_VERSION@/$WEBKIT_VERSION/g" "$ADDON/addon.xml"
+sed -i "s/@VERSION@/$VERSION/g; s/@WEBKIT_VERSION@/$WEBKIT_VERSION/g; s/@DISPLAY_VERSION@/$DISPLAY_VERSION/g" "$ADDON/addon.xml"
 echo "Built $ADDON with the ARM64 shell."
