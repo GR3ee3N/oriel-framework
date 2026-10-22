@@ -170,6 +170,15 @@ class AppTests(unittest.TestCase):
         self.app.on_action(4, sent, False)
         self.assertEqual(self.app.shell.key.call_args_list, [((103, sent),), ((5, sent),)])
 
+    def test_digit_actions_reach_the_page_as_digits(self):
+        self.cmd(cmd="ready")
+        sent = self.oriel.now()
+        # Number0/1 (58/59), Number2 (60, the keyboard keymap) and JumpSMS2 (142, the remote keymap).
+        for action in (58, 59, 60, 142):
+            self.app.on_action(action, sent, False)
+        self.assertEqual(self.app.shell.key.call_args_list,
+                         [((11, sent),), ((2, sent),), ((3, sent),), ((3, sent),)])
+
     def test_command_timeout_has_a_distinct_code(self):
         with patch.object(self.oriel, "COMMAND_TIMEOUT", 0.05):
             self.assertEqual(self.cmd(cmd="slow"), (504, {"error": "no reply in time", "code": "timeout"}))

@@ -179,9 +179,7 @@ reaches the page as a `KeyboardEvent`:
 | `next`, `previous` | `MediaTrackNext`, `MediaTrackPrevious` |
 | `fastforward`, `rewind` | `MediaFastForward`, `MediaRewind` |
 | `pageup`, `pagedown` | `PageUp`, `PageDown` |
-| `2` to `9` | `2` to `9` |
-
-Digits 0 and 1 are not available.
+| `0` to `9` | `0` to `9` |
 
 Keys reach neither `on_key` nor the page before `ready`, or while
 `VideoApp` hides the page during playback. The colour buttons and channel

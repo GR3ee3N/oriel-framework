@@ -49,9 +49,11 @@ KEYS = {
     "rewind": ((78,), 168),
     "pageup": ((5,), 104),
     "pagedown": ((6,), 109),
-    # The remote keymap sends 2-9 as JumpSMS2-9 (142-149). Kodi gives
-    # add-on windows no digit actions, so 0 and 1 never arrive.
-    **{str(n): ((140 + n,), 1 + n) for n in range(2, 10)},
+    # The remote keymap sends 0 and 1 as Number0/1 (58/59) and 2-9 as
+    # JumpSMS2-9 (142-149); the keyboard keymap sends Number0-9 (58-67).
+    "0": ((58,), 11),
+    "1": ((59,), 2),
+    **{str(n): ((58 + n, 140 + n), 1 + n) for n in range(2, 10)},
 }
 KEY_NAMES = {action: name for name, (actions, _) in KEYS.items() for action in actions}
 # A keymap command (RunAddon and such); Kodi runs it, it's not our key.
