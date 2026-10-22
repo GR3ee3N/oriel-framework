@@ -211,7 +211,8 @@ run(MyVideoApp)
 
 `mode()` gives the page's mode: `browse`, `osd` (the page over the video)
 or `video` (the page hidden; the base `App` never hides it). While the video plays without the OSD, Back
-stops playback and any other key except Stop shows the OSD.
+stops playback and any other key except Stop shows the OSD. Keys Kodi
+keeps for itself, such as volume, do nothing there.
 
 Media plays from absolute URLs, or from relative paths on the media source
 that the page sets with `media-source`: the framework's proxy on

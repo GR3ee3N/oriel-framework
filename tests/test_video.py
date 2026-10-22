@@ -101,6 +101,9 @@ class VideoTests(unittest.TestCase):
             ("playing", "playpause", True, True, True), ("playing", "stop", True, True, False),
             ("osd", "playpause", True, True, False), ("osd", "playpause", False, False, False),
             ("playing", "select", False, True, True), ("browse", "playpause", False, False, False),
+            # Volume and mute have no page name: Kodi acts on them alone.
+            ("playing", None, True, False, False), ("osd", None, True, False, False),
+            ("playing", None, False, False, False),
         ):
             with self.subTest(phase=phase, key=key, kodi=kodi):
                 app = self.app_in(phase)
@@ -108,6 +111,16 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(app.intercept_key(key, self.oriel.now(), kodi), kept)
                 self.assertEqual(app.show_osd.called, osd)
                 app.stop_playback.assert_not_called()
+
+    def test_volume_actions_do_not_show_the_osd(self):
+        # Kodi actions 88 (volume up), 89 (volume down), 91 (mute), 245 (volume set).
+        for action in (88, 89, 91, 245):
+            with self.subTest(action=action):
+                app = self.app_in("playing")
+                app.show_osd = Mock()
+                app.on_action(action, self.oriel.now(), True)
+                app.show_osd.assert_not_called()
+                self.assertEqual(app.phase, "playing")
 
     def test_back_during_playback_stops_it(self):
         app = self.app_in("playing")

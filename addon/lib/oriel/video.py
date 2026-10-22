@@ -8,8 +8,9 @@ succeed without doing anything when it already holds. A relative path (`/…`) p
 the proxy (proxy.py), which adds its headers; an absolute URL plays as it is.
 Times are in the item's timeline: a stream that begins into the item (a
 transcode, say) gives its `streamOffset`. Kodi also acts on its player keys
-during playback (the key's kodi flag); any other key there shows the page as
-the OSD.
+during playback (the key's kodi flag); any other named key there shows the
+page as the OSD. Keys with no page name are Kodi's alone (volume, mute):
+Kodi acts on them and they leave the page as it is.
 
 Close the playback dialog before stopping playback; closing it while Kodi
 stops hangs Kodi's GUI.
@@ -299,6 +300,8 @@ class VideoApp(App):
         self.show_osd()
 
     def intercept_key(self, key, sent, kodi):
+        if key is None:
+            return False
         if self.phase in ("playing", "osd") and kodi:
             # Kodi does it, so we don't do it twice. A stop ends through on_ended, after Kodi's stop.
             if key != "stop" and self.phase == "playing":
