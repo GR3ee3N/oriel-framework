@@ -10,7 +10,7 @@ case "$(uname -s):$(uname -m)" in
     *) echo "build tools require Linux on x86_64 or ARM64" >&2; exit 1 ;;
 esac
 command -v docker >/dev/null || { echo "install and start Docker before building" >&2; exit 1; }
-# Release snapshots share the checkout's dependency caches and output directory.
+# Reuse checkout dependency caches and output paths for release snapshots.
 CACHE=${ORIEL_CACHE:-$REPO/.cache}
 mkdir -p "$CACHE"
 CACHE=$(cd "$CACHE" && pwd)

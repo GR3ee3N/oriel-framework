@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kodi JSON-RPC over TCP on localhost:9090; needs no webserver or login.
+"""Call Kodi JSON-RPC over TCP at localhost:9090 without HTTP or authentication.
 
     kodirpc.py <Method> [json-params]
     kodirpc.py --listen
@@ -62,7 +62,7 @@ def enable(addon):
                 return
             kodi.call("Addons.SetAddonEnabled", {"addonid": addon, "enabled": True})
         except RuntimeError:
-            pass  # UpdateLocalAddons has not registered the add-on yet.
+            pass  # Registration after UpdateLocalAddons can still be pending.
         if time.monotonic() >= deadline:
             raise RuntimeError(f"Kodi did not enable {addon}")
         time.sleep(0.25)

@@ -40,7 +40,7 @@ def states():
         app.on_started()
         app.poll()
         app.on_ended("ended")
-        # A transcode from 600 s, before Kodi knows its length.
+        # Capture a transcode starting at 600 s before Kodi reports its duration.
         app.page_play("http://media.example/transcode.mkv", session="two", position=600,
                                    streamOffset=600)
         app.on_started()

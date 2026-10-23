@@ -119,7 +119,7 @@ class AppTests(unittest.TestCase):
         while not self.app.shell.stop.called and time.monotonic() < deadline:
             time.sleep(0.01)
         self.app.shell.stop.assert_called_once()
-        # The stopped shell exits cleanly; that starts it again rather than closing the app.
+        # A clean exit after a requested settings restart must relaunch the shell.
         self.app.on_shell_exit(0)
         self.assertFalse(self.app.exiting)
         self.assertEqual(self.app.restarts, [])
@@ -173,7 +173,7 @@ class AppTests(unittest.TestCase):
     def test_digit_actions_reach_the_page_as_digits(self):
         self.cmd(cmd="ready")
         sent = self.oriel.now()
-        # Number0/1 (58/59), Number2 (60, the keyboard keymap) and JumpSMS2 (142, the remote keymap).
+        # Cover Number0/1 (58/59), keyboard Number2 (60) and remote JumpSMS2 (142).
         for action in (58, 59, 60, 142):
             self.app.on_action(action, sent, False)
         self.assertEqual(self.app.shell.key.call_args_list,

@@ -11,16 +11,16 @@ from unittest.mock import Mock, call, patch
 from .kodi import kodi
 
 REPO = Path(__file__).resolve().parent.parent
-# The protocol crate build/compile.sh unpacks.
+# Locate the protocol crate extracted by build/compile.sh.
 PROTOCOL = REPO / ".cache/display/protocol"
 
-# The add-on's socket is SOCK_SEQPACKET, which macOS lacks; datagrams keep
-# the message boundaries there too, but never see the peer go.
+# Use datagrams on macOS, which lacks SOCK_SEQPACKET. They preserve message
+# boundaries but cannot report peer disconnection.
 KIND = socket.SOCK_SEQPACKET if sys.platform == "linux" else socket.SOCK_DGRAM
 
 
 class AddOn:
-    """vfs.oriel.display's end of the control socket."""
+    """Simulate the display add-on's control socket endpoint."""
 
     def __init__(self, test, hello=None):
         self.socket, client = socket.socketpair(socket.AF_UNIX, KIND)
@@ -78,7 +78,7 @@ class DisplayClientTests(unittest.TestCase):
         addon.send(key=12, t=13.0, kodi=True)
         self.assertEqual(self.event(), ("key", 12, 13.0, True))
 
-        # The close waits for Kodi to have closed the window.
+        # A waiting close completes only after the window-closed notification.
         def close_it():
             self.assertEqual(addon.receive(), {"close": "player"})
             addon.send(window="player", state="closed")
@@ -148,7 +148,7 @@ class DisplayClientTests(unittest.TestCase):
 
 
 class DisplayModeTests(unittest.TestCase):
-    """The apps with vfs.oriel.display drawing the page."""
+    """Exercise apps whose page is drawn by vfs.oriel.display."""
 
     def setUp(self):
         self.oriel, self.video, _ = self.enterContext(kodi())
@@ -197,7 +197,7 @@ class DisplayModeTests(unittest.TestCase):
         app.phase = "browse"
         xbmcgui = sys.modules["xbmcgui"]
         with patch.object(xbmcgui, "getCurrentWindowId", Mock(return_value=10000), create=True):
-            # Before the window opened: not away yet.
+            # Do not treat the unopened window as an app exit.
             for _ in range(5):
                 app.check_away()
             self.assertFalse(app.exiting)
@@ -251,7 +251,7 @@ class DisplayModeTests(unittest.TestCase):
         calls.attach_mock(self.client.close, "close")
         with patch.object(self.video.xbmc, "executebuiltin", calls.builtin):
             app.stop_playback("test")
-        # The dialog closes before playback stops.
+        # Require dialog closure before the Kodi stop call.
         self.assertEqual(calls.mock_calls[0], call.close("player", wait=2))
         self.assertIn(call.builtin("PlayerControl(Stop)"), calls.mock_calls)
         self.assertFalse(app.ours(14001))
@@ -265,7 +265,7 @@ class ProtocolTests(unittest.TestCase):
         self.display = sys.modules["oriel.display"]
 
     def crate(self):
-        """The protocol crate's lib.rs."""
+        """Read the protocol crate's lib.rs for contract checks."""
         try:
             return (PROTOCOL / "src/lib.rs").read_text()
         except FileNotFoundError:

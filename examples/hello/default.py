@@ -1,5 +1,7 @@
-"""The framework's example app: a count the page changes with `add`, and
-Info resets in the add-on without the page seeing the key."""
+"""Example app with an add command and an add-on-handled Info key.
+
+The page changes the count through add; Info resets it without reaching the page.
+"""
 import oriel
 
 

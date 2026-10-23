@@ -1,4 +1,4 @@
-// State and commands between the page and its add-on.
+// Synchronize page state and commands with the Kodi add-on.
 //
 //     export const { state, send, call, connect, ready } = createBridge<State, Command>({ ... });
 
@@ -6,26 +6,24 @@ import { createStore, reconcile } from 'solid-js/store';
 
 export interface BaseState {
   connected: boolean;
-  /** WebKit draws the page on the CPU instead of the GPU, the framework's
-   * setting for every app; false unless changed. */
+  /** Shared framework CPU rendering setting; defaults to false (GPU). */
   cpuRendering: boolean;
-  /** Kodi's screensaver delay in minutes, for an app with `own_screensaver`;
-   * null for other apps, or when Kodi's screensaver is off. */
+  /** Kodi idle delay in minutes for apps using own_screensaver; null for
+   * other apps or when Kodi's screensaver is disabled. */
   screensaver: number | null;
 }
 
-/** A success means it's done. */
+/** These commands complete before replying, except the subsequent rendering restart. */
 export type BaseCommand =
   | { cmd: 'ready' }
   | { cmd: 'exit' }
-  /** Sets and saves `cpuRendering`. A change restarts the page, which loses
-   * its state, as WebKit takes it only when it starts. */
+  /** Save cpuRendering. A changed value restarts WebKit to apply the setting,
+   * reloading the page and discarding its in-memory state. */
   | { cmd: 'cpu-rendering'; on: boolean };
 
-/** Why a command failed (docs/apps.md). invalid: it can't work as sent;
- * unavailable: not now, e.g. without playback; failed: the add-on broke;
- * timeout: no reply in time, though it may have run; unreachable: no answer
- * from the add-on, or one cut off. */
+/** Failure codes from docs/apps.md: invalid request, unavailable app state,
+ * unexpected handler failure, response timeout with unknown outcome, or
+ * unreachable add-on/unreadable response. */
 export type FailureCode = 'invalid' | 'unavailable' | 'failed' | 'timeout' | 'unreachable';
 
 export class CommandFailure extends Error {
@@ -37,43 +35,40 @@ export class CommandFailure extends Error {
   }
 }
 
-// Loaded from the dev server, the page still runs in WebKit on the box, next to its add-on.
+// Development-server pages still run in the box's WebKit and reach its loopback API.
 export const ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:32499' : '';
 
 export interface Bridge<S extends BaseState, C extends { cmd: string }> {
   state: S;
-  /** Fire and forget: a failure is logged, not thrown. Commands from send
-   * and call reach the add-on one at a time, in the order they were sent. */
+  /** Queue a command and log any failure. send and call share an ordered queue. */
   send(command: C | BaseCommand): void;
-  /** The command's result; rejects with a CommandFailure, for commands
-   * whose failure the caller handles. */
+  /** Queue a command and return its result, rejecting with CommandFailure on error. */
   call<R = unknown>(command: C | BaseCommand): Promise<R>;
-  /** Call once at start. */
+  /** Open the state event stream once at app startup. */
   connect(): void;
-  /** Call after the first frame. */
+  /** Notify the add-on after the initial page render. */
   ready(): void;
 }
 
 export function createBridge<S extends BaseState, C extends { cmd: string }>(
   initial: Omit<S, keyof BaseState>,
 ): Bridge<S, C> {
-  // Solid's setters don't take a generic store's keys.
+  // Use the base store type because Solid setters cannot resolve generic state keys.
   const [state, setState] = createStore<BaseState>({ ...initial, connected: false, cpuRendering: false, screensaver: null });
 
   const post = async <R>(command: C | BaseCommand): Promise<R> => {
-    // text/plain avoids a CORS preflight from the dev server.
+    // A string body defaults to text/plain, permitting requests without CORS preflight.
     const r = await fetch(`${ORIGIN}/api/cmd`, { method: 'POST', body: JSON.stringify(command) }).catch((e) => {
       throw new CommandFailure(`${command.cmd}: ${e}`, 'unreachable');
     });
     const reply = (await r.json().catch(() => null)) as { result?: R; error?: string; code?: FailureCode } | null;
     if (!r.ok) throw new CommandFailure(`${command.cmd}: ${reply?.error ?? `HTTP ${r.status}`}`, reply?.code ?? 'failed');
-    // A cut-off reply leaves the outcome unknown.
+    // An unreadable reply cannot establish whether the command completed.
     if (!reply) throw new CommandFailure(`${command.cmd}: unreadable reply`, 'unreachable');
     return reply.result as R;
   };
 
-  // One command at a time: requests in parallel can reach the add-on in
-  // another order than they were sent.
+  // Serialize requests so network arrival order cannot reorder page commands.
   let last: Promise<unknown> = Promise.resolve();
   const call = <R>(command: C | BaseCommand): Promise<R> => {
     const reply = last.then(() => post<R>(command));

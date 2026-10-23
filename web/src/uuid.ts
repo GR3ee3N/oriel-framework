@@ -1,4 +1,4 @@
-// crypto.randomUUID needs a secure context, which the dev server isn't.
+// Support development pages served over HTTP, where crypto.randomUUID is unavailable.
 
 export function uuid(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();

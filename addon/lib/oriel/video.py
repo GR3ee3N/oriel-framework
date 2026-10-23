@@ -1,19 +1,17 @@
-"""An app that has Kodi play its media, with the page as the OSD.
-
-    starting -> browse -> loading -> playing <-> osd -> browse
+"""Play media in Kodi with page-based browsing and playback controls.
 
 Page commands: media-source, play, set-paused, stop, seek-to, audio,
-subtitle, osd-on, osd-off. They set a state rather than toggle one, and
-succeed without doing anything when it already holds. A relative path (`/…`) plays from the media source through
-the proxy (proxy.py), which adds its headers; an absolute URL plays as it is.
-Times are in the item's timeline: a stream that begins into the item (a
-transcode, say) gives its `streamOffset`. Kodi also acts on its player keys
-during playback (the key's kodi flag); any other named key there shows the
-page as the OSD. Keys with no page name are Kodi's alone (volume, mute):
-Kodi acts on them and they leave the page as it is.
+subtitle, osd-on and osd-off. Setting an already active state succeeds
+without further action. Relative paths use the media proxy and its source
+headers; absolute URLs play directly.
 
-Close the playback dialog before stopping playback; closing it while Kodi
-stops hangs Kodi's GUI.
+Positions use the item's timeline. streamOffset identifies the start of a
+stream that begins partway through an item. Kodi handles actions marked
+with the kodi flag during playback. Other named keys can open the OSD;
+unnamed actions, such as volume and mute, leave page visibility unchanged.
+
+Close the playback dialog before stopping playback. Closing it during
+Kodi's stop operation deadlocks the GUI.
 """
 import traceback
 from urllib.parse import urlsplit
@@ -28,15 +26,15 @@ from .proxy import ProxyProcess
 
 PROXY = f"http://127.0.0.1:{config.PROXY_PORT}"
 TRACK_PROPERTIES = ["audiostreams", "subtitles", "currentaudiostream", "currentsubtitle", "subtitleenabled"]
-# select_tracks: the viewer's subtitle choice, whatever an audio switch does to it.
+# Preserve the requested subtitle selection across audio switches in select_tracks.
 KEEP = "keep"
 
-# Back stops playback, unless the OSD only just closed: that Back was meant for it.
+# Treat Back immediately after OSD closure as OSD input, not a playback stop.
 BACK_GRACE = 1.0
-# Kodi's "Adjust display refresh rate: On start / stop": playback's end puts
-# the output back in the mode it had before.
+# Kodi setting value for restoring the browse display mode after playback:
+# "Adjust display refresh rate: On start / stop".
 REFRESH_ON_START_STOP = 2
-# The longest the page waits for that.
+# Maximum wait in seconds for the browse display mode to return.
 MODE_WAIT = 5.0
 
 
@@ -49,14 +47,14 @@ def output_mode():
 
 
 def player_state(state="idle", time=0, duration=None, session=None, meta=None, ended=None):
-    """The page's `player`: every field always there, null when unknown or
-    none. The track lists stay null until this session's file has started."""
+    """Build player state with every field present, using null for unknown or
+    absent values. Track lists remain null until this session's file starts.
+    """
     return {"state": state, "time": time, "duration": duration, "session": session, "meta": meta,
             "ended": ended, "audio": None, "subtitles": None, "audioIndex": None, "subtitleIndex": None}
 
 
-# A command's values are checked before it changes anything; None is the
-# default for optional ones.
+# Validate command values before changing state; None selects optional defaults.
 
 def invalid(name, what):
     return CommandError(f"{name} must be {what}", "invalid")
@@ -70,7 +68,7 @@ def number(name, value, optional=False):
     return float(value)
 
 
-# Kodi's track indexes are C ints.
+# Bound track indexes to Kodi's signed C int range.
 INDEX_MAX = 2**31 - 1
 
 
@@ -113,11 +111,10 @@ class VideoApp(App):
         super().__init__()
         self.player_state = player_state()
         self.start_streams = {}
-        # The subtitle last asked of Kodi for this file, (index, shown); None
-        # until then.
+        # Retain the last requested (subtitle index, visibility) until Kodi reports it.
         self.subtitle_asked = None
-        # Kodi's clock starts at 0 where the stream begins; for a transcode
-        # its duration is a guess, so the page's duration wins (None: Kodi's).
+        # Kodi starts each stream at time 0; add streamOffset for the item timeline.
+        # Prefer page-supplied transcode duration; None falls back to Kodi's duration.
         self.stream_offset = 0.0
         self.duration = None
         self.decoders = device.decoders()
@@ -127,19 +124,18 @@ class VideoApp(App):
         self.loading_since = 0.0
         self.replaced_at = -1e9
         self.played_url = None
-        # vfs.oriel.display's player window is up.
+        # Track whether the display playback dialog is open.
         self.osd_open = False
         self.osd_off_at = 0.0
         self.player = Player(self.events)
         self.idle = 0
         self.polls = 0
-        # The output mode while browsing, and until when the page waits for
-        # Kodi to return to it after playback.
+        # Retain the browse output mode and the deadline for restoring page visibility.
         self.browse_mode = None
         self.show_by = None
 
     def media_url(self, path):
-        """The URL Kodi plays for a path or subtitle file from the page."""
+        """Resolve page media and subtitle paths to Kodi playback URLs."""
         if urlsplit(path).scheme:
             return path
         if not self.media_source:
@@ -147,11 +143,11 @@ class VideoApp(App):
         return PROXY + path
 
     def is_ours(self, file):
-        """Return True if Kodi's playing file is the app's; it's stopped on close."""
+        """Return True for app-owned playback that must stop when the app closes."""
         return file == self.played_url or file.startswith(PROXY + "/")
 
     def mode(self):
-        """'browse', 'osd' (the page over the video) or 'video' (hidden)."""
+        """Return browse, osd (page over video) or video (page hidden)."""
         return {"osd": "osd", "loading": "video", "playing": "video"}.get(self.phase, "browse")
 
     def page_shown(self):
@@ -161,7 +157,7 @@ class VideoApp(App):
         return {**super().state(), "mode": self.mode(), "player": dict(self.player_state), "decoders": self.decoders}
 
     def end(self):
-        """Where the stream ends in the item's timeline; None while unknown."""
+        """Return the stream end on the item timeline, or None while unknown."""
         if self.duration:
             return self.duration
         total = self.player.getTotalTime()
@@ -186,7 +182,7 @@ class VideoApp(App):
 
     @command("media-source")
     def page_media_source(self, base, headers=None):
-        # Not the headers: they hold tokens.
+        # Keep source headers out of logs because they can contain tokens.
         log("media source", base)
         try:
             self.proxy.set_source(base, headers or {})
@@ -213,13 +209,12 @@ class VideoApp(App):
         start = position - stream_offset
         if start < 0:
             raise CommandError("the position is before the stream's beginning", "invalid")
-        # A paused session stays paused, also through a replacement of a file
-        # that hasn't started yet.
+        # Preserve pause state for same-session replacements, including files still loading.
         same = session is not None and session == self.player_state["session"]
         paused = same and (self.player_state["state"] == "paused"
                            or self.phase == "loading" and self.start_streams.get("paused"))
-        # A new file during playback (a transcode restarted to seek): Kodi
-        # switches without a stop, so ignore the old file's end.
+        # Kodi replaces files without stopping, such as on a transcode seek;
+        # ignore end notifications for the previous file.
         if self.phase != "browse":
             self.close_osd()
             self.replaced_at = now()
@@ -231,11 +226,11 @@ class VideoApp(App):
         self.stream_offset = stream_offset
         self.duration = duration
         self.subtitle_asked = None
-        # Applied in on_started. Subtitle -1 means none.
+        # Defer track selection until on_started; subtitle -1 disables subtitles.
         self.start_streams = {
             "audio": audio, "subtitle": subtitle, "subtitleFile": subtitleFile, "paused": paused,
         }
-        # meta is for a page reloaded during playback.
+        # Retain metadata so a reloaded page can restore playback state.
         self.player_state = player_state("loading", int(position), duration and int(duration), session, meta)
         self.publish()
         self.hide_later()
@@ -260,7 +255,7 @@ class VideoApp(App):
         self.require("playing", "osd")
         if not isinstance(paused, bool):
             raise CommandError("paused must be true or false", "invalid")
-        # Not a toggle: Kodi's own Play/Pause key may have got there first.
+        # Set an explicit pause state because Kodi may already have handled Play/Pause.
         if jsonrpc("Player.PlayPause", playerid=1, play=not paused) is None:
             raise CommandError("Kodi refused")
 
@@ -293,7 +288,7 @@ class VideoApp(App):
 
     @command("osd-on")
     def page_osd_on(self):
-        # E.g. a Skip intro prompt.
+        # Playback prompts can request page visibility.
         if self.phase == "osd":
             return
         self.require("playing")
@@ -303,7 +298,7 @@ class VideoApp(App):
         if key is None:
             return False
         if self.phase in ("playing", "osd") and kodi:
-            # Kodi does it, so we don't do it twice. A stop ends through on_ended, after Kodi's stop.
+            # Kodi handles these actions; its stop completes through on_ended.
             if key != "stop" and self.phase == "playing":
                 self.show_osd()
         elif self.phase == "playing" and key == "back":
@@ -316,7 +311,7 @@ class VideoApp(App):
         return True
 
     def stop_playback(self, why):
-        # Dialog first (see above); also shows the page ~0.8 s before Kodi reports the stop.
+        # Close the dialog before stopping to prevent the Kodi GUI deadlock described above.
         self.on_ended(why)
         xbmc.executebuiltin("PlayerControl(Stop)")
 
@@ -326,14 +321,13 @@ class VideoApp(App):
         self.show_page()
 
     def select_tracks(self, audio=None, subtitle=None, file=None):
-        """Has Kodi play these tracks. An audio or embedded subtitle switch
-        reopens the stream and seeks, even to the active track, which can
-        upset A/V sync, so only what differs is switched. Subtitle -1 means
-        none, None leaves it to Kodi, KEEP keeps the viewer's choice; a file
-        overrides it."""
-        # Kodi applies switches later, in the order they're asked for, and
-        # reports them only once it has: decide them all from what's active
-        # now, with the subtitle last asked for standing in for Kodi's.
+        """Apply track changes only when needed: Kodi reopens and seeks the stream
+        on audio or embedded-subtitle selection, which can disturb A/V sync.
+        Subtitle -1 disables subtitles, None leaves Kodi's selection, and KEEP
+        preserves the viewer's choice; a subtitle file overrides these options.
+        """
+        # Kodi queues switches and reports them after applying them. Base decisions
+        # on active tracks, using the last requested subtitle while its report is pending.
         tracks = jsonrpc("Player.GetProperties", playerid=1, properties=[
             "currentaudiostream", "currentsubtitle", "subtitleenabled", "subtitles"]) or {}
         index, shown = self.subtitle_asked or (
@@ -342,8 +336,8 @@ class VideoApp(App):
         replaced = False
         if audio is not None and (tracks.get("currentaudiostream") or {}).get("index") != audio:
             self.player.setAudioStream(audio)
-            # Kodi then swaps a forced subtitle for one in the new audio's
-            # language, or hides it, also when it isn't showing.
+            # Audio changes replace or hide forced subtitles according to audio language,
+            # even when the current forced subtitle is hidden.
             replaced = any(s["index"] == index and s.get("isforced") for s in tracks.get("subtitles", []))
         if subtitle == KEEP:
             subtitle = (-1 if showing is None else showing) if replaced else None
@@ -356,8 +350,8 @@ class VideoApp(App):
             self.player.showSubtitles(False)
             self.subtitle_asked = (index, False)
         else:
-            # A hidden track is off in the demuxer too, and showing it doesn't
-            # turn it back on: only a showing one can be left as it is.
+            # Showing a hidden subtitle does not restore its demuxed packets;
+            # reselect it unless it is already visible.
             if replaced or showing != subtitle:
                 self.player.setSubtitleStream(subtitle)
             self.player.showSubtitles(True)
@@ -382,7 +376,7 @@ class VideoApp(App):
         self.close_osd()
         if self.phase in ("loading", "playing", "osd"):
             log("back to browse:", why)
-            # Kodi reports a file it can't open as a stop.
+            # A stop before successful startup can mean Kodi failed to open the file.
             if why in ("error", "did not start") or (why == "stopped" and self.phase == "loading"):
                 ended = "error"
             elif why == "ended" or (why == "no longer playing" and self.near_end()):
@@ -393,8 +387,8 @@ class VideoApp(App):
             s = self.player_state
             self.player_state = player_state("idle", s["time"], s["duration"], s["session"], s["meta"], ended)
             self.publish()
-            # Shown in the playback's mode, the page would flash up before
-            # the TV's switch back blanks it.
+            # Wait for the browse output mode so the TV's mode switch does not interrupt
+            # a briefly visible page.
             if (self.browse_mode and output_mode() != self.browse_mode
                     and kodi_setting("videoplayer.adjustrefreshrate") == REFRESH_ON_START_STOP):
                 log("waiting for the output to go back to", self.browse_mode)
@@ -403,7 +397,7 @@ class VideoApp(App):
                 self.show_page()
 
     def near_end(self):
-        # Kodi's end callback comes ~1 s late and can lose to the poll.
+        # Polling can detect playback end before Kodi delivers its callback.
         t, d = self.player_state["time"], self.player_state["duration"]
         return d is not None and t >= d - 10
 
@@ -426,7 +420,7 @@ class VideoApp(App):
             self.show_by = None
             self.show_page()
         if self.phase in ("playing", "osd"):
-            # Kodi doesn't always call back when playback ends.
+            # Polling also detects playback ends without a Kodi callback.
             if not self.player.isPlayingVideo():
                 self.idle += 1
                 if self.idle >= 3:
@@ -442,13 +436,12 @@ class VideoApp(App):
                     duration=None if end is None else int(end))
             except RuntimeError:
                 pass
-            # Once a second: track changes take effect in Kodi a moment after
-            # they're asked for.
+            # Refresh tracks once a second because Kodi applies requested changes asynchronously.
             self.polls += 1
             if self.polls % 4 == 1:
                 self.update_tracks()
         elif self.phase == "loading" and now() - self.loading_since > 30 and not self.player.isPlayingVideo():
-            # Kodi failed to open it without saying so.
+            # Detect startup failures that Kodi did not report through a callback.
             self.on_ended("did not start")
 
     def update_tracks(self):
@@ -472,7 +465,7 @@ class VideoApp(App):
         if self.exiting:
             return
         self.close_osd()
-        # The media may be served by the app, which is going away.
+        # Stop app-owned playback before shutting down a possible media source.
         try:
             if self.player.isPlaying() and self.is_ours(self.player.getPlayingFile()):
                 log("stopping the playback with the app")
@@ -480,7 +473,7 @@ class VideoApp(App):
         except RuntimeError:
             pass
         except Exception:
-            # An app's is_ours must not keep the app from closing.
+            # Complete shutdown even if the app's ownership check raises.
             log("is_ours failed")
             log(traceback.format_exc())
         super().close()

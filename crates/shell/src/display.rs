@@ -1,16 +1,14 @@
-//! Shows the page through vfs.oriel.display, which draws it in Kodi's own GUI
-//! frame: WebKit's buffers go to the add-on as dma-bufs, and only Kodi
-//! commits planes. The wire format is the oriel-display-protocol crate.
+//! Send WebKit dma-bufs to vfs.oriel.display for drawing in Kodi's GUI frame.
+//! Kodi owns plane commits. Messages use the oriel-display-protocol wire format.
 //!
-//! WebKit stays one frame ahead of Kodi: a frame goes to the add-on once the
-//! one before it was drawn, and WebKit hears it was rendered then. A buffer
-//! goes back to WebKit when the add-on releases it.
+//! Keep WebKit one frame ahead of Kodi. After the add-on draws a frame,
+//! report completion to WebKit and submit the pending frame. Return buffers
+//! to WebKit only after the add-on releases them.
 //!
-//! The add-on reads a buffer as soon as it gets it. WebKit hands a frame to
-//! `render_buffer` only after its rendering fence signalled, as long as the
-//! display doesn't use explicit sync, which `main` turns off.
+//! The add-on reads submitted buffers immediately. main disables explicit
+//! sync so WebKit waits for each rendering fence before calling render_buffer.
 //!
-//! When the add-on goes away or refuses us, the shell exits with status 4.
+//! Exit with status 4 if the add-on disconnects or refuses the protocol version.
 
 use glib::ffi::{GTRUE, gboolean};
 use glib::gobject_ffi;
@@ -27,13 +25,13 @@ struct Display {
     _socket: OwnedFd,
     view: *mut wpe::WPEView,
     next_id: u32,
-    /// Shown and not released yet; each holds a reference.
+    /// Submitted buffers awaiting release; each entry owns a reference.
     held: HashMap<u32, *mut wpe::WPEBuffer>,
-    /// Buffers the add-on has; empty again after a reset.
+    /// Buffer ids imported by the add-on; cleared on reset.
     sent: HashSet<u32>,
-    /// A frame went out and wasn't drawn yet.
+    /// A submitted frame is awaiting draw confirmation.
     in_flight: bool,
-    /// The next frame, rendered meanwhile.
+    /// Rendered frame waiting for the submitted frame to be drawn.
     waiting: Option<u32>,
     stats: Stats,
 }
@@ -50,15 +48,15 @@ struct Stats {
 
 thread_local! {
     static DISPLAY: RefCell<Option<Display>> = const { RefCell::new(None) };
-    /// For buffers' destroy notifies, which may run inside a DISPLAY borrow.
+    /// Defer buffer destruction notifications that can run while DISPLAY is borrowed.
     static SOCKET: Cell<c_int> = const { Cell::new(-1) };
 }
 
-/// The buffer's id, kept on the buffer.
+/// Key for the protocol id stored on each buffer.
 const KEY: &std::ffi::CStr = c"oriel-display-id";
 
 unsafe extern "C" {
-    // Not wrapped by the glib crate.
+    // Call the GLib API directly because the crate does not expose it.
     fn g_unix_fd_add(
         fd: c_int,
         condition: c_uint,
@@ -100,7 +98,7 @@ pub fn install(view: *mut wpe::WPEView) -> std::io::Result<()> {
     let socket = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    // Abstract namespace: a leading NUL.
+    // A leading NUL selects the Linux abstract socket namespace.
     for (i, b) in protocol::SOCKET.iter().enumerate() {
         addr.sun_path[i + 1] = *b as libc::c_char;
     }
@@ -134,7 +132,7 @@ unsafe extern "C" fn forget(data: *mut c_void) {
 }
 
 impl Display {
-    /// The buffer's id, given the first time it is seen.
+    /// Assign a stable protocol id on first use of a buffer.
     unsafe fn id(&mut self, buffer: *mut wpe::WPEBuffer) -> u32 {
         let object = buffer.cast::<gobject_ffi::GObject>();
         let id = unsafe { gobject_ffi::g_object_get_data(object, KEY.as_ptr()) } as usize as u32;
@@ -147,7 +145,7 @@ impl Display {
         id
     }
 
-    /// Sends the buffer's planes, unless the add-on already has them.
+    /// Send plane descriptors only when the add-on has not imported this buffer.
     unsafe fn share(&mut self, id: u32, buffer: *mut wpe::WPEBuffer) -> Result<(), String> {
         if self.sent.contains(&id) {
             return Ok(());
@@ -184,7 +182,7 @@ impl Display {
 
     fn show(&mut self, id: u32) {
         let Some(&buffer) = self.held.get(&id) else { return };
-        // A reset may have come while the frame waited.
+        // Reimport if the add-on reset its buffers while this frame was pending.
         if let Err(e) = unsafe { self.share(id, buffer) } {
             eprintln!("oriel-shell: buffer {id}: {e}");
         }
@@ -222,7 +220,7 @@ unsafe extern "C" fn render_buffer(
         d.show(id);
         rendered = Some(d.view);
     });
-    // Outside the borrow: WebKit may hand us the next frame from here.
+    // Release the borrow before notifying WebKit, which can submit another frame.
     if let Some(view) = rendered {
         unsafe { wpe::wpe_view_buffer_rendered(view, buffer) };
     }

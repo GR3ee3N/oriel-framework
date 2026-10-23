@@ -22,7 +22,7 @@ class WebKitTests(RepositoryTests):
         (usr / "libexec/WPEWebProcess").chmod(0o755)
         with tarfile.open(installed / "usr.tar.gz", "w:gz") as archive:
             archive.add(usr, arcname="usr")
-        # Exercise the real unpacker rather than the Kodi fixture's replacement.
+        # Restore the real unpacker to test extraction independently of the Kodi fixture.
         webkit = load("oriel.webkit", ROOT / "addon/lib/oriel/webkit.py")
         with patch.object(oriel.config, "webkit_dir", return_value=str(installed)):
             self.assertEqual(webkit.ensure(), str(installed / "usr"))

@@ -1,14 +1,13 @@
-"""An Oriel app: a web page over the running Kodi.
+"""Run a web page inside Kodi using App or video.VideoApp.
 
-Subclass App (or video.VideoApp) and call run() from default.py. Hooks:
-on_start, on_stop, on_key, state, poll, on_event and ours; @command
-registers the page's commands.
+Subclass the app and call run() from default.py. Override on_start,
+on_stop, on_key, state, poll, on_event and ours; register page commands
+with @command.
 
-Kodi draws the page in its own GUI, in vfs.oriel.display's windows
-(display.py), and keeps the remote: those windows' keys come from the
-add-on and go on to the shell. Kodi callbacks only queue events; one
-controller thread owns the state and makes every Kodi call, since no
-callback may wait on us.
+vfs.oriel.display draws the page in Kodi windows and forwards their keys
+to the shell through display.py. Kodi callbacks queue events without
+waiting. One controller thread owns app state and makes Kodi calls to
+prevent callbacks from blocking on the controller.
 """
 import inspect
 import json
@@ -28,20 +27,20 @@ from .log import close_log, log, open_log
 from .server import Server, failure
 from .shell import Shell
 
-# The remote's keys: name -> (Kodi actions, evdev code for the page). The
-# page sees them as DOM keys (web/src/nav/keys.ts); xkb/ remaps those WebKit
-# doesn't know. Kodi's default keymaps send the colour buttons to other
-# windows, and channel up/down as page up/down, so they aren't here.
+# Map remote key names to (Kodi actions, page evdev code). xkb/ maps codes
+# WebKit does not recognize to DOM keys listed in web/src/nav/keys.ts.
+# Kodi routes colour buttons to other windows and maps channel keys to
+# page up/down, so neither has a separate page action.
 KEYS = {
     "left": ((1,), 105),
     "right": ((2,), 106),
     "up": ((3,), 103),
     "down": ((4,), 108),
     "select": ((7,), 28),  # Enter
-    "back": ((10, 92), 1),  # previous menu, back -> Escape
+    "back": ((10, 92), 1),  # Previous menu and Back map to Escape.
     "info": ((11,), 59),  # F1
-    "menu": ((117,), 139),  # context menu
-    "playpause": ((12, 79, 229), 164),  # pause, play, play/pause
+    "menu": ((117,), 139),  # Context menu.
+    "playpause": ((12, 79, 229), 164),  # Pause, Play and Play/Pause.
     "stop": ((13,), 166),
     "next": ((14,), 163),
     "previous": ((15,), 165),
@@ -49,31 +48,31 @@ KEYS = {
     "rewind": ((78,), 168),
     "pageup": ((5,), 104),
     "pagedown": ((6,), 109),
-    # The remote keymap sends 0 and 1 as Number0/1 (58/59) and 2-9 as
-    # JumpSMS2-9 (142-149); the keyboard keymap sends Number0-9 (58-67).
+    # Remote digits use Number0/1 (58/59) and JumpSMS2-9 (142-149).
+    # Keyboard digits use Number0-9 (58-67).
     "0": ((58,), 11),
     "1": ((59,), 2),
     **{str(n): ((58 + n, 140 + n), 1 + n) for n in range(2, 10)},
 }
 KEY_NAMES = {action: name for name, (actions, _) in KEYS.items() for action in actions}
-# A keymap command (RunAddon and such); Kodi runs it, it's not our key.
+# Kodi executes built-in keymap commands such as RunAddon without page input.
 ACTION_BUILT_IN_FUNCTION = 122
 
 KODI_VIDEO_WINDOWS = (12005, 12901)
 
-# Dialogs that leave the keys to us (volume, notifications, seek bar, busy).
-# Any other dialog takes them, so the page is hidden while it's up.
+# Volume, notification, seek and busy dialogs leave input with the page.
+# Other dialogs take input and require the page to be hidden.
 PASSIVE_DIALOGS = (9999, 10104, 10107, 10115, 10138, 10151, 10160)
 
 RESTARTS = 2
 RESTART_WINDOW = 300
-# The shell's status when vfs.oriel.display went away or refused it.
+# Shell exit status for display disconnection or protocol refusal.
 SHELL_DISPLAY_GONE = 4
 
-# Lets the page clear itself first, so its old screen doesn't flash when it shows again.
+# Let the page clear before hiding it so stale content cannot flash on return.
 HIDE_DELAY = 0.2
 
-# How long the page waits for a command's reply.
+# Command response deadline in seconds.
 COMMAND_TIMEOUT = 10
 
 
@@ -82,9 +81,10 @@ def now():
 
 
 def command(name, log=False):
-    """Makes an App method the handler of the page's command `name`. The
-    command's fields are its keyword arguments, its return value (JSON) the
-    reply's result. log=True also logs the fields; leave it off for secrets."""
+    """Register a page command handler with fields as keyword arguments and a
+    JSON-serializable return value as the result. log=True includes fields
+    in logs; keep it disabled for commands carrying secrets.
+    """
 
     def register(method):
         method.oriel_command = (name, log)
@@ -94,9 +94,10 @@ def command(name, log=False):
 
 
 class CommandError(Exception):
-    """Raise from a command handler to refuse it: the page gets the message
-    and code (server.FAILURES: "invalid" or "unavailable") as the error, the
-    log a line without a traceback."""
+    """Refuse a command with a message and an invalid or unavailable code.
+
+    Return the refusal to the page and log it without a traceback.
+    """
 
     def __init__(self, message, code="unavailable"):
         if code not in ("invalid", "unavailable"):
@@ -106,7 +107,7 @@ class CommandError(Exception):
 
 
 class Reply:
-    """A command's reply, from the controller thread to the HTTP thread."""
+    """Pass command results from the controller thread to the HTTP thread."""
 
     def __init__(self):
         self.done = threading.Event()
@@ -123,15 +124,14 @@ class Monitor(xbmc.Monitor):
         self.events = events
 
     def onNotification(self, sender, method, data):
-        # Other.System.OnSleep: the same, sent by hand for testing.
+        # Accept Other.System.OnSleep as a manually sent sleep event for tests.
         if method in ("System.OnSleep", "Other.System.OnSleep"):
             self.events.put(("sleep",))
 
 
 class App:
-    # True: Kodi's screensaver is held off and the page runs its own after
-    # Kodi's delay (`screensaver` in the state). False: Kodi's runs, over
-    # the hidden page, and `screensaver` is null.
+    # True suppresses Kodi's screensaver and publishes its delay for the page.
+    # False hides the page during Kodi's screensaver and publishes a null delay.
     own_screensaver = False
 
     def __init__(self):
@@ -143,13 +143,13 @@ class App:
         self.away = 0
         self.covered = False
         self.main_window_id = None
-        # Where Kodi was when the app started.
+        # Retain the Kodi window to restore when the app closes.
         self.start_window_id = xbmcgui.getCurrentWindowId()
         self.screensaver = screensaver_minutes() if self.own_screensaver else None
         self.settings = config.load_settings()
         self.inhibited = None
         self.restarts = []
-        # The shell was stopped to start again with new settings, not to close.
+        # Distinguish a settings-triggered shell restart from app shutdown.
         self.restarting = False
         self.commands = {}
         for cls in reversed(type(self).__mro__):
@@ -166,7 +166,7 @@ class App:
         self.display = display.connect(self.events)
         if not self.display:
             raise display.Unavailable()
-        # vfs.oriel.display takes one client at a time: let go of it if the app can't start.
+        # Release the single display connection if startup fails.
         try:
             self.server = Server(
                 config.PORT, os.path.join(addon_path, "resources", "web"), os.path.join(self.data_dir, "store.json"),
@@ -178,35 +178,35 @@ class App:
             raise
 
     def on_start(self):
-        """Called before the page loads."""
+        """Initialize app state before loading the page."""
 
     def on_stop(self):
-        """Called on close, after the shell quit and the page is gone."""
+        """Release app resources after the shell and page have exited."""
 
     def on_key(self, key):
-        """A key for the page (a name in KEYS). Return True to keep it from the page."""
+        """Handle a named key from KEYS; return True to prevent page delivery."""
         return False
 
     def page_shown(self):
-        """For VideoApp: False while it hides the page; keys then don't go to it."""
+        """Return False to withhold page keys while VideoApp hides the page."""
         return True
 
     def state(self):
-        """The page's state; extend it."""
+        """Return page state; subclasses extend the base fields."""
         return {
             "cpuRendering": self.settings.get("cpuRendering", False),
             "screensaver": self.screensaver,
         }
 
     def poll(self):
-        """Called four times a second."""
+        """Update app state on the controller's 250 ms poll."""
 
     def on_event(self, kind, args):
-        """An event the app queued itself."""
+        """Handle an app-defined event from the controller queue."""
         log("ignored event", kind)
 
     def ours(self, dialog):
-        """Return True if the top dialog is the app's own."""
+        """Return True for an app-owned dialog that should leave the page visible."""
         return False
 
     def start(self):
@@ -217,7 +217,7 @@ class App:
         threading.Thread(target=self.tick, name="oriel-tick", daemon=True).start()
 
     def shell_env(self):
-        """WebKit's environment, from the current settings."""
+        """Build the WebKit environment from shared and development settings."""
         env = {}
         if self.dev.get("inspector"):
             env["WEBKIT_INSPECTOR_HTTP_SERVER"] = self.dev["inspector"]
@@ -228,7 +228,7 @@ class App:
 
     def tick(self):
         monitor = Monitor(self.events)
-        # Kodi keeps the script's interpreter alive while this thread runs.
+        # This thread keeps the Kodi script interpreter alive.
         while not self.exiting and not monitor.waitForAbort(0.25):
             self.events.put(("tick",))
         self.events.put(("abort",))
@@ -247,7 +247,7 @@ class App:
         try:
             self.loop()
         finally:
-            # Never strand our window over Kodi.
+            # Close the display connection even if app cleanup fails.
             if not self.exiting:
                 log("controller died")
                 self.close()
@@ -293,8 +293,7 @@ class App:
             self.on_event(kind, args)
 
     def page_command(self, command):
-        """From an HTTP thread: runs a page command on the controller thread
-        and returns its (status, body)."""
+        """Queue an HTTP command for the controller and wait for its status/body reply."""
         reply = Reply()
         self.events.put(("page", command, reply))
         reply.done.wait(COMMAND_TIMEOUT)
@@ -347,7 +346,7 @@ class App:
         self.settings["cpuRendering"] = on
         config.save_settings(self.settings)
         self.publish()
-        # WebKit reads it at start: restart the shell after this reply.
+        # WebKit reads rendering settings at startup; restart after sending the reply.
         self.events.put(("restart-shell",))
 
     def on_action(self, action_id, sent, kodi):
@@ -359,8 +358,10 @@ class App:
             self.shell.key(KEYS[key][1], sent)
 
     def intercept_key(self, key, sent, kodi):
-        """For VideoApp: True keeps the key (None if unnamed) from on_key and the
-        page. kodi: Kodi also acts on it."""
+        """Let VideoApp consume a key before on_key and page delivery.
+
+        Unnamed keys use None; kodi indicates that Kodi also handles the action.
+        """
         return False
 
     def inhibit(self, on):
@@ -376,14 +377,14 @@ class App:
             self.check_away()
 
     def check_away(self):
-        """Kodi leaving our window, e.g. for Home, counts as exit."""
-        # Our window's id comes from vfs.oriel.display when the window opens.
+        """Treat navigation away from the app's Kodi window as an exit."""
+        # Use the browse window id reported by vfs.oriel.display.
         if self.covered or self.main_window_id is None:
             self.away = 0
             return
         current = xbmcgui.getCurrentWindowId()
         if current in KODI_VIDEO_WINDOWS or xbmc.getCondVisibility("Player.HasMedia"):
-            # Kodi can sit in fullscreen video for a second after we stop playback.
+            # Allow Kodi time to leave fullscreen video after playback stops.
             self.away = 0
         elif current != self.main_window_id:
             self.away += 1
@@ -394,7 +395,7 @@ class App:
             self.away = 0
 
     def check_covered(self):
-        """Hides the page while a Kodi dialog or the screensaver is up."""
+        """Hide the page while a blocking Kodi dialog or screensaver is visible."""
         if self.phase == "starting":
             return
         dialog = xbmcgui.getCurrentWindowDialogId()
@@ -425,7 +426,7 @@ class App:
             return self.close()
         self.restarts.append(t)
         log("shell died with", code, "- starting it again")
-        # Drop the dev hook (#play=…); it already ran.
+        # Remove the startup development fragment so a reload does not repeat it.
         self.shell.start(self.shell_url.split("#")[0], self.shell_env(), self.stage, append_log=True)
 
     def close(self):
@@ -435,11 +436,11 @@ class App:
         log("closing")
         self.shell.stop()
         self.display.stop()
-        # Kodi would come back to our window, which nothing draws now.
+        # Restore a Kodi window with active content before the app window closes.
         current = xbmcgui.getCurrentWindowId()
         if current == self.main_window_id or current in KODI_VIDEO_WINDOWS:
             xbmc.executebuiltin(f"ActivateWindow({self.start_window_id})")
-        # The app's bug must not leave Kodi behind our window.
+        # Restore Kodi even if an app shutdown hook fails.
         try:
             self.on_stop()
         except Exception:
@@ -449,7 +450,7 @@ class App:
 
 
 def jsonrpc(method, **params):
-    """Kodi's JSON-RPC from Python: the result, or None."""
+    """Return the Kodi JSON-RPC result, or None when absent."""
     request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
         return json.loads(xbmc.executeJSONRPC(json.dumps(request))).get("result")
@@ -478,8 +479,8 @@ def run(cls):
         controller = threading.Thread(target=app.run, name="oriel-controller", daemon=True)
         controller.start()
         app.display.open("browse", app.mark)
-        # Kodi calls back objects made on this thread (VideoApp's Player)
-        # only from within its own calls on it.
+        # Kodi invokes callbacks for objects created here, including VideoApp's
+        # Player, only during Kodi calls made by this thread.
         while controller.is_alive():
             xbmc.sleep(100)
     except display.Unavailable as e:
@@ -489,7 +490,7 @@ def run(cls):
         log("failed:", repr(e))
         raise
     finally:
-        # If Kodi closed our window, the controller still has to clean up.
+        # Run controller cleanup even when Kodi has already closed the app window.
         if controller:
             app.events.put(("abort",))
             controller.join(5)

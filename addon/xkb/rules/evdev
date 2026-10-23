@@ -1,9 +1,7 @@
-// Oriel: the system evdev rules plus symbols/oriel(remote), which remaps
-// TV-remote keys WebKit does not know (it reports them as "Unidentified",
-// keyCode 0) onto keysyms it does. This file shadows the system "evdev"
-// rules through XKB_CONFIG_EXTRA_PATH. WPEPlatform builds its keymap from
-// explicit names and ignores XKB_DEFAULT_OPTIONS, so the remap is applied
-// for every model instead of behind an option.
+// Extend system evdev rules with symbols/oriel(remote), mapping remote keys
+// reported as Unidentified/keyCode 0 to keysyms recognized by WebKit.
+// XKB_CONFIG_EXTRA_PATH selects these rules. Apply the mapping to every model
+// because WPEPlatform uses explicit keymap names and ignores XKB_DEFAULT_OPTIONS.
 ! include %S/evdev
 
 ! model           = symbols

@@ -14,14 +14,14 @@ from .kodi import kodi
 
 
 class FakeKodi:
-    """Kodi's VideoPlayer as far as tracks go. The player's methods queue
-    their switches, applied later and in order, as Kodi does; each audio or
-    embedded subtitle switch seeks. forced maps forced subtitles to their
-    language; languages are the audio tracks'."""
+    """Simulate Kodi track switching with an ordered queue and a seek for each
+    audio or embedded-subtitle switch. forced maps subtitle indexes to
+    languages; languages lists the audio track languages.
+    """
 
     def __init__(self, audio, subtitle, enabled, forced=None, languages=()):
         self.audio, self.subtitle, self.enabled = audio, subtitle, enabled
-        # Whether the subtitle's packets reach the player.
+        # Track whether the demuxer delivers subtitle packets.
         self.demuxed = enabled and subtitle is not None
         self.forced = forced or {}
         self.languages = list(languages)
@@ -39,7 +39,7 @@ class FakeKodi:
         self.queue.append(("audio", index))
 
     def setSubtitleStream(self, index):
-        # The binding shows it too.
+        # Kodi's binding also enables subtitle visibility when selecting a track.
         self.queue += [("subtitle", index), ("visible", True)]
 
     def showSubtitles(self, visible):
@@ -65,13 +65,13 @@ class FakeKodi:
                 self.subtitle, self.demuxed = value, True
                 self.seeks += 1
             elif kind == "visible":
-                # Showing doesn't turn the stream back on in the demuxer.
+                # Visibility alone does not reenable subtitle packets in the demuxer.
                 self.enabled = value
                 self.demuxed = self.demuxed and value
         self.queue = []
 
     def shown(self):
-        """The subtitle on screen, or None."""
+        """Return the visible subtitle index, or None when not displayed."""
         return self.subtitle if self.enabled and self.demuxed else None
 
 
@@ -101,7 +101,7 @@ class VideoTests(unittest.TestCase):
             ("playing", "playpause", True, True, True), ("playing", "stop", True, True, False),
             ("osd", "playpause", True, True, False), ("osd", "playpause", False, False, False),
             ("playing", "select", False, True, True), ("browse", "playpause", False, False, False),
-            # Volume and mute have no page name: Kodi acts on them alone.
+            # Unnamed volume and mute actions belong exclusively to Kodi.
             ("playing", None, True, False, False), ("osd", None, True, False, False),
             ("playing", None, False, False, False),
         ):
@@ -113,7 +113,7 @@ class VideoTests(unittest.TestCase):
                 app.stop_playback.assert_not_called()
 
     def test_volume_actions_do_not_show_the_osd(self):
-        # Kodi actions 88 (volume up), 89 (volume down), 91 (mute), 245 (volume set).
+        # Exercise Kodi volume actions: up 88, down 89, mute 91 and set 245.
         for action in (88, 89, 91, 245):
             with self.subTest(action=action):
                 app = self.app_in("playing")
@@ -146,7 +146,7 @@ class VideoTests(unittest.TestCase):
         for audio, subtitle, enabled, want_audio, want_subtitle, seeks in (
             (1, 2, True, 1, 2, 0), (1, 2, True, None, None, 0), (1, 2, True, 1, -1, 0),
             (0, 2, True, 1, 2, 1), (1, 0, True, 1, 2, 1), (0, 0, True, 1, 2, 2),
-            # Kodi selected the track but hid it: it must be switched on in the demuxer.
+            # Reselect the hidden track to restore subtitle packets in the demuxer.
             (1, 2, False, 1, 2, 1),
         ):
             with self.subTest(audio=audio, subtitle=subtitle, enabled=enabled,
@@ -170,7 +170,7 @@ class VideoTests(unittest.TestCase):
     def test_audio_change_keeps_subtitle_choice(self):
         for subtitle, enabled, forced, seeks in (
             (2, True, {}, 1), (None, False, {}, 1),
-            # Kodi swaps a forced subtitle when audio changes, even a hidden one.
+            # Audio switching replaces forced subtitles even when they are hidden.
             (0, True, {0: "en", 1: "de"}, 2), (0, False, {0: "en", 1: "de"}, 1),
             (0, True, {0: "en"}, 2), (0, False, {0: "en"}, 1),
         ):
@@ -205,7 +205,7 @@ class VideoTests(unittest.TestCase):
         for subtitle, enabled, forced, commands, shown in (
             (2, True, {}, [("subtitle", -1), ("subtitle", 2)], 2),
             (2, True, {}, [("subtitle", 2), ("subtitle", -1)], None),
-            # A forced subtitle Kodi doesn't report yet is still swapped by the audio switch.
+            # Include pending forced-subtitle selections when preserving subtitles across audio changes.
             (2, True, {0: "en"}, [("subtitle", 0), ("audio", 1)], 0),
             (0, True, {0: "en"}, [("subtitle", 2), ("audio", 1)], 2),
         ):
@@ -223,7 +223,7 @@ class VideoTests(unittest.TestCase):
         app.page_subtitle(index=-1)
         kodi.process()
         app.page_play("/next.mkv", session="two", audio=0, subtitle=2)
-        # Kodi opened the new file with subtitle 2 showing.
+        # Simulate the new file starting with subtitle index 2 visible.
         kodi.enabled = kodi.demuxed = True
         app.on_started()
         kodi.process()
@@ -334,7 +334,7 @@ class ProxyTests(unittest.TestCase):
             self.assertIsNone(proxy.process)
 
     def source(self):
-        """A media source that records each request's path and X-Token; its base URL and the record."""
+        """Return a source URL and a record of request paths and X-Token headers."""
         seen = []
 
         class Source(BaseHTTPRequestHandler):

@@ -1,8 +1,8 @@
-"""Checks the shell's ARM64 ELF architecture and library requirements.
+"""Validate the shell's ARM64 ELF architecture and library requirements.
 
     build/check-shell.py SHELL WEBKIT_DEV
 
-Required libraries and symbol versions must be provided by WebKit or CoreELEC.
+WebKit or CoreELEC must provide every required library and symbol version.
 """
 from pathlib import Path
 import re
@@ -24,7 +24,7 @@ def problems(dynamic, versions, dev):
     system = re.compile(target["LIBRARIES"])
     found = [f"needs {name}, which neither WebKit's add-on nor the box provides"
              for name in re.findall(r"\(NEEDED\).*\[(.*?)\]", dynamic) if name not in provided and not system.fullmatch(name)]
-    # Only requirements, not the versions a library itself exports.
+    # Inspect required symbol versions without including versions exported by the binary.
     needs = versions.partition("Version needs section")[2]
     for name, required in re.findall(r"\b(GLIBC|GLIBCXX|CXXABI|GCC)_([0-9]+(?:\.[0-9]+)*)\b", needs):
         if version(required) > version(target[name]):

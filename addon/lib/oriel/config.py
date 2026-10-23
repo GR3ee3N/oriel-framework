@@ -1,9 +1,10 @@
-"""Paths on the box, and per-app development settings in
-/storage/oriel/dev/<add-on id>.json:
+"""Device paths and app development settings.
 
-    {"url": "http://<pc>:5173/",        load the page from the dev server
-     "inspector": "0.0.0.0:9226",       WebKit's remote inspector
-     "env": {"NAME": "value"}}          extra environment for the shell
+Read /storage/oriel/dev/<add-on id>.json at app startup:
+
+    {"url": "http://<pc>:5173/",        development page URL
+     "inspector": "0.0.0.0:9226",       remote inspector address
+     "env": {"NAME": "value"}}          additional shell environment
 """
 import json
 import os
@@ -16,7 +17,7 @@ FRAMEWORK_ADDON = "script.module.oriel.framework"
 CTL = "/run/oriel/ctl"
 DEV = "/storage/oriel/dev"
 
-# Shared: only one Oriel app runs at a time.
+# Shared ports require Oriel apps to run one at a time.
 PORT = 32499
 PROXY_PORT = 32500
 
@@ -47,7 +48,7 @@ def data_dir(addon=None):
 
 
 def settings_path():
-    """The framework's settings, the same for every app."""
+    """Locate framework settings shared by all apps."""
     return os.path.join(data_dir(FRAMEWORK_ADDON), "settings.json")
 
 

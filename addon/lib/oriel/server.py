@@ -1,20 +1,19 @@
-"""The page's HTTP server on 127.0.0.1.
+"""Serve the page and app API on 127.0.0.1.
 
-    GET  /             the app's resources/web
+    GET  /             app resources/web files
     GET  /api/events   server-sent `state` events
-    POST /api/cmd      a command from the page; replies {"result"}, or
-                       {"error", "code"} with the code's status (FAILURES)
-    GET  /api/store    saved settings, plus `run`, an id for this start
-    POST /api/store    merge settings; null removes a key
+    POST /api/cmd      command result {"result"}, or {"error", "code"}
+                       with the HTTP status defined by FAILURES
+    GET  /api/store    saved settings plus the current app `run` id
+    POST /api/store    merge settings; null deletes a key
 
-Never serve Kodi anything from here (media, say): Kodi's threads must not
-wait on Kodi's Python. /api allows the dev server's origin, if there is one.
+Do not serve media to Kodi here: its playback threads must not wait on
+Kodi's Python interpreter. /api accepts the configured development origin.
 
-Requests with a foreign Origin are refused: CORS only hides the reply, and the
-page's commands are simple requests that a foreign page can send too. The
-Host check stops DNS rebinding, which would make a foreign page same-origin.
-Requests without an Origin still require a Host of 127.0.0.1 or localhost
-at the server's port.
+Reject foreign Origin headers before processing commands. CORS response
+filtering alone cannot stop a web page from sending simple requests.
+Require Host to name 127.0.0.1 or localhost at this server's port, including
+for requests without Origin, to prevent DNS rebinding.
 """
 import json
 import math
@@ -25,14 +24,13 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# A failed command's code and HTTP status. invalid: it can't work as sent;
-# unavailable: not now (no playback, say); failed: the handler broke;
-# timeout: no reply in time, though it may still have run.
+# Map command failures to HTTP status: invalid request, unavailable app state,
+# unexpected handler failure, or an expired response deadline with unknown outcome.
 FAILURES = {"invalid": 400, "unavailable": 409, "failed": 500, "timeout": 504}
 
 
 def finite(text):
-    # 1e309 is valid JSON, but Python reads it as infinity.
+    # Reject valid JSON numbers such as 1e309 that overflow Python floats.
     value = float(text)
     if not math.isfinite(value):
         raise ValueError(f"{text} is too large")
@@ -40,7 +38,7 @@ def finite(text):
 
 
 def not_json(constant):
-    # Python's json takes NaN and Infinity, which JSON doesn't.
+    # Reject NaN and Infinity, which Python accepts but JSON forbids.
     raise ValueError(f"{constant} is not JSON")
 
 
@@ -56,7 +54,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), Handler)
         self.web_root = os.path.realpath(web_root)
         self.store_path = store_path
-        # Takes a command, returns (status, body).
+        # Controller callback returns the command's (HTTP status, response body).
         self.on_command = on_command
         self.origin = origin
         self.lock = threading.Lock()
@@ -96,7 +94,7 @@ class Server(ThreadingHTTPServer):
         with self.lock:
             for q in self.clients:
                 q.put(None)
-        if self.serving:  # shutdown() waits for serve_forever() forever
+        if self.serving:  # shutdown() blocks unless serve_forever() is running.
             self.shutdown()
         self.server_close()
 
@@ -196,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(file):
             if "." in os.path.basename(path):
                 return self.send_error(404)
-            file = os.path.join(root, "index.html")  # an app route
+            file = os.path.join(root, "index.html")  # Serve extensionless app routes.
         with open(file, "rb") as f:
             data = f.read()
         self.send_response(200)

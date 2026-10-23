@@ -1,18 +1,18 @@
-"""Media proxy in a separate process to avoid deadlocking Kodi's Python.
+"""Proxy media in a separate Python process to prevent Kodi lock deadlocks.
 
-Kodi plays http://127.0.0.1:32500/<path>; the proxy adds the media source's
-headers so tokens stay out of Kodi's URLs, logs and video database. Only
-Kodi may use it: a request with another Host (DNS rebinding) or with an
-Origin (a web page) is refused, as it would get the source's tokens.
+Kodi requests http://127.0.0.1:32500/<path>. Add source headers at the proxy
+so tokens stay out of Kodi URLs, logs and the video database. Reject
+foreign Host headers to block DNS rebinding and reject Origin headers to
+block web pages from requesting media with the source credentials.
 
-Kodi's playback threads wait on proxy reads while the controller can hold
-the Python lock inside a Kodi call waiting on those threads. The proxy
-therefore runs under /usr/bin/python3 using only the standard library.
+Kodi playback threads wait for proxy reads. A controller call can hold
+Kodi's Python lock while waiting for those threads, so the proxy runs
+under /usr/bin/python3 with only standard-library dependencies.
 
-VideoApp sends sources on stdin as JSON lines:
-{"base": "http://<server>:32400", "headers": {…}}. Command-line arguments
-would expose secret headers through `ps`. Replies on stdout are `ready`
-once listening, then `ok` or `error <why>` for each source update.
+VideoApp sends JSON lines on stdin:
+{"base": "http://<server>:32400", "headers": {…}}. Keeping headers off the
+command line prevents exposure through `ps`. Stdout replies are `ready`
+after startup, then `ok` or `error <why>` for each source update.
 """
 import json
 import os
@@ -27,14 +27,17 @@ from urllib.parse import urlsplit
 HERE = os.path.abspath(__file__)
 ANSWER_TIMEOUT = 5
 CHUNK = 256 * 1024
-# Seconds before each attempt to fetch the rest of a body the source ended
-# early; Kodi gives up on a read after about 20 s without data.
+# Retry delays in seconds for prematurely ended bodies. Keep recovery within
+# Kodi's read timeout, approximately 20 s without data.
 RESUME_DELAYS = (0, 1, 2, 4)
 
 
 class ProxyProcess:
-    """VideoApp's handle on the proxy process. set_source raises ValueError
-    for a source the proxy rejects, RuntimeError when the proxy can't take one."""
+    """Manage VideoApp's proxy process.
+
+    set_source raises ValueError for rejected sources and RuntimeError for
+    proxy startup, communication or response failures.
+    """
 
     def __init__(self, port, log):
         self.port = port
@@ -45,7 +48,7 @@ class ProxyProcess:
         process = subprocess.Popen(
             ["/usr/bin/python3", HERE, str(self.port)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin"}, start_new_session=True)
-        # Its traceback (the port taken, say) goes to the log.
+        # Capture startup tracebacks, including address-in-use failures, in the app log.
         threading.Thread(target=self._stderr, args=(process,), name="proxy-err", daemon=True).start()
         if self._answer(process) != "ready":
             process.kill()
@@ -56,7 +59,7 @@ class ProxyProcess:
 
     @staticmethod
     def _answer(process):
-        """The proxy's next line, or None if none comes in time."""
+        """Read a proxy response line, or return None on timeout or EOF."""
         if not select.select([process.stdout], [], [], ANSWER_TIMEOUT)[0]:
             return None
         return process.stdout.readline().decode("utf-8", "replace").rstrip("\n") or None
@@ -75,7 +78,7 @@ class ProxyProcess:
             raise RuntimeError(f"cannot set the media source: {e}") from e
         answer = self._answer(self.process)
         if answer is None:
-            # A late answer would be taken for the next source's.
+            # Kill the process so a late response cannot be mistaken for the next update's reply.
             self.process.kill()
             self.process.wait()
             self.process = None
@@ -87,7 +90,7 @@ class ProxyProcess:
         if not self.process:
             return
         try:
-            self.process.stdin.close()  # the proxy exits on end of input
+            self.process.stdin.close()  # EOF requests proxy shutdown.
             self.process.wait(2)
         except (OSError, subprocess.TimeoutExpired):
             self.process.kill()
@@ -106,8 +109,9 @@ def parse_source(line):
 
 
 def body_span(status, length, content_range):
-    """The first and last byte of the file in a response body of `length`
-    bytes, or None if unknown (no Content-Length, or not the file)."""
+    """Return the inclusive file byte range represented by this response body,
+    or None when its length or file offset cannot be determined.
+    """
     if length is None:
         return None
     if status == 200:
@@ -128,7 +132,7 @@ def serve(port):
         print(*args, file=sys.stderr, flush=True)
 
     class Upstream:
-        """The connection to the source for one of Kodi's requests."""
+        """Retain source request details across reconnects for one Kodi request."""
 
         def __init__(self, s, method, url, headers):
             scheme, self.host, self.port, prefix, extra = s
@@ -148,7 +152,7 @@ def serve(port):
                 self.conn.close()
 
     def read(r, size):
-        """Up to `size` bytes of r's body; nothing if the source let go."""
+        """Read up to size bytes; return empty bytes on a connection or HTTP failure."""
         try:
             return r.read(size)
         except (OSError, http.client.HTTPException):
@@ -171,7 +175,7 @@ def serve(port):
                 return self.send_error(503, "no media source")
             headers = {k.title(): v for k, v in self.headers.items() if k.lower() in ("range", "user-agent", "accept")}
             upstream = Upstream(s, method, self.path, headers)
-            # The path, never a query: it can hold tokens.
+            # Log paths without query strings, which can contain tokens.
             path = self.path.split("?")[0]
             try:
                 r = upstream.open()
@@ -186,25 +190,26 @@ def serve(port):
                 if method == "GET":
                     self.copy(r, upstream, path)
             except (BrokenPipeError, ConnectionResetError, http.client.IncompleteRead):
-                pass  # Kodi or the source let go (a stream replaced, say)
+                pass  # Either endpoint can disconnect during stream replacement.
             except OSError as e:
                 log(f"{method} {path} failed: {e}")
             finally:
                 upstream.close()
 
         def copy(self, r, upstream, path):
-            """Sends r's body to Kodi. A source can end a body early (Plex
-            drops a user's streams while another of their playbacks runs).
-            Kodi takes a short body read with nothing cached, as right after
-            a seek, for the end of the file, so the rest of a file's body is
-            fetched with a range request and Kodi gets it whole."""
+            """Forward the body and resume premature file responses with range requests.
+
+            A source can drop an active body, including during another Plex
+            playback. Kodi can treat a short read after a seek as EOF, so
+            recover the remaining bytes before ending its response.
+            """
             span = body_span(r.status, r.length, r.getheader("Content-Range"))
             if not span:
                 while chunk := r.read(CHUNK):
                     self.wfile.write(chunk)
                 return
             at, end = span
-            # A range of a changed file must not be spliced in.
+            # Use If-Range validation to prevent joining bytes from different file versions.
             validator = r.getheader("ETag") or r.getheader("Last-Modified")
             tries = resumed = 0
             try:

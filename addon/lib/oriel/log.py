@@ -1,4 +1,4 @@
-"""addon.log, timestamped with the same monotonic clock as shell.log."""
+"""Write addon.log using the monotonic timestamps shared with shell.log."""
 import time
 
 log_file = None
@@ -6,7 +6,7 @@ log_file = None
 
 def open_log(path):
     global log_file
-    # Kodi's Python uses an ASCII locale.
+    # Specify UTF-8 because Kodi's Python locale is ASCII.
     log_file = open(path, "w", encoding="utf-8")
 
 

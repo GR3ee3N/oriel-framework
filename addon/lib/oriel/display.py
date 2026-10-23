@@ -1,8 +1,9 @@
-"""The client of vfs.oriel.display, which draws the page in Kodi's own GUI
-(oriel-display's docs/protocol.md, the control socket). Its windows show the
-page and hand us their keys; the shell sends it the page's frames.
+"""Control vfs.oriel.display windows and receive their remote actions.
 
-The reader thread queues events for the controller: ("key", action, t, kodi),
+The control socket follows oriel-display's docs/protocol.md. The display
+add-on draws frames supplied by the shell in Kodi's GUI.
+
+The reader queues controller events: ("key", action, t, kodi),
 ("display-window", name, id, state) and ("display-gone",).
 """
 import json
@@ -16,7 +17,7 @@ from .log import log
 ADDON = "vfs.oriel.display"
 SOCKET = "\0oriel-display-control"
 VERSION = 1
-# The add-on takes one client at a time; a stuck one would keep us waiting.
+# Bound the handshake wait because the add-on accepts one client at a time.
 HELLO_TIMEOUT = 2
 
 
@@ -30,7 +31,7 @@ def available():
 
 
 def connect(events):
-    """A Display, or None when the add-on isn't there to draw the page."""
+    """Connect to the display add-on; return None if unavailable or handshake fails."""
     if not available():
         log(f"{ADDON} is not enabled")
         return None
@@ -49,10 +50,10 @@ def connect(events):
 
 class Display:
     def __init__(self, events, connection):
-        """connection: the control socket, connected; the hello may time out."""
+        """Handshake on a connected control socket; propagate timeout or refusal."""
         self.events = events
         self.stopping = False
-        # Kodi's id of each open window, kept by the reader thread.
+        # The reader thread updates Kodi window ids as windows open and close.
         self.ids = {}
         self.closed = {"browse": threading.Event(), "player": threading.Event()}
         for closed in self.closed.values():
@@ -77,7 +78,7 @@ class Display:
         self.send(**{"open": which, **({"mark": mark} if which == "browse" else {})})
 
     def close(self, which, wait=0):
-        """Closes the window; waits up to `wait` seconds for Kodi to have closed it."""
+        """Request window closure and optionally wait up to wait seconds for confirmation."""
         self.send(close=which)
         if wait and not self.closed[which].wait(wait):
             log(f"the {which} window did not close")
@@ -89,7 +90,7 @@ class Display:
         self.send(draw=on)
 
     def stop(self):
-        """Disconnects, which closes the windows."""
+        """Disconnect so the display add-on closes this client's windows."""
         self.stopping = True
         try:
             self.socket.shutdown(socket.SHUT_RDWR)

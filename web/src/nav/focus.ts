@@ -1,6 +1,6 @@
-// Spatial D-pad focus. Scopes and groups remember their last focus; left and
-// right stay within a row. The focused element gets the `focused` class; the
-// DOM's own focus isn't used.
+// Navigate by element position with remembered focus per scope and group.
+// Horizontal moves stay within the row. Apply the focused class independently
+// of native DOM focus.
 
 import { createSignal, onCleanup, untrack } from 'solid-js';
 import { useScope } from './scope';
@@ -11,14 +11,14 @@ export interface Options {
   scope?: string;
   group?: string;
   onSelect?: () => unknown;
-  /** Return true to keep the focus, e.g. for a scrubber. */
+  /** Return true to consume an arrow without moving focus, such as during scrubbing. */
   onArrow?: (direction: Direction) => boolean;
   onPlay?: () => unknown;
   onFocus?: () => void;
   autofocus?: boolean;
-  /** Lands here when entering a group with no remembered focus. */
+  /** Default target when entering a group without remembered focus. */
   entry?: boolean;
-  /** False: entering the group goes to the nearest element instead. */
+  /** Disable group focus recall to enter at the nearest element. */
   recall?: boolean;
 }
 
@@ -31,7 +31,7 @@ const last = new Map<string, HTMLElement>();
 const lastInGroup = new Map<string, HTMLElement>();
 const [current, setCurrent] = createSignal<HTMLElement | null>(null);
 const [activeScope, setActiveScope] = createSignal('main');
-// Focus placed by us, not the user; a late autofocus element may take it.
+// Implicit focus may yield to an autofocus element that mounts later.
 let implicit = false;
 
 export { current as focused, activeScope };
@@ -67,7 +67,7 @@ function restore(scope: string): void {
   implicit = !auto;
 }
 
-/** Call from a `ref`. */
+/** Register from a Solid ref; remove the entry on owner cleanup. */
 export function focusable(el: HTMLElement, options: Options = {}): void {
   const entry = { ...options, scope: options.scope ?? useScope() };
   entries.set(el, entry);
@@ -90,9 +90,9 @@ export function focusable(el: HTMLElement, options: Options = {}): void {
   });
 }
 
-/** `fresh` forgets the scope's last focus. */
+/** Enter a focus scope; fresh clears its remembered focus. */
 export function setScope(scope: string, fresh = false): void {
-  // Effects call this; they must not depend on the focus.
+  // Do not subscribe calling effects to focus changes made during scope restoration.
   untrack(() => {
     if (fresh) last.delete(scope);
     if (scope === activeScope() && !fresh) return;
@@ -122,7 +122,7 @@ export function move(direction: Direction): boolean {
     if (el === from) continue;
     const b = el.getBoundingClientRect();
     if (b.width === 0 && b.height === 0) continue;
-    // Off-axis distance counts double, so a row stays a row.
+    // Weight cross-axis distance twice to favor candidates aligned with the current row.
     let ahead: number;
     let aside: number;
     switch (direction) {

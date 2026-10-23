@@ -1,4 +1,4 @@
-"""Packages the framework add-on and @oriel/web with their licenses and sources."""
+"""Package the framework add-on and @oriel/web, including licenses and source archives."""
 import hashlib
 import os
 from pathlib import Path
@@ -31,7 +31,7 @@ def tar_tree(directory, destination):
 
 
 def zip_tree(directory, destination):
-    # Old upstream files predate ZIP's 1980 epoch.
+    # Clamp upstream file timestamps to ZIP's minimum year of 1980.
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
         for file in sorted(directory.rglob("*")):
             require(not file.is_symlink(), f"ZIP must not contain Unix links: {file}")
@@ -68,7 +68,7 @@ def package(runtime, source, licenses, destination):
     (addon / "SOURCE.txt").write_text(url + "\n")
     zip_name = f"script.module.oriel.framework-{v}.zip"
     zip_tree(addon, files / zip_name)
-    # Apps compile these TypeScript sources with their own build tools.
+    # Ship TypeScript sources for compilation by each app's build tools.
     web_package = stage / "package"
     shutil.copytree(REPO / "web/src", web_package / "src")
     (web_package / "package.json").write_text((REPO / "web/package.json").read_text().replace("@VERSION@", v))
@@ -78,7 +78,7 @@ def package(runtime, source, licenses, destination):
     tar_tree(web_package, files / f"oriel-web-{v}.tgz")
     shutil.copytree(licenses, source / "licenses")
     tar_tree(source, files / f"{source.name}.tar.xz")
-    # Kodi's index is served from the latest release alongside the zip it names.
+    # Publish the Kodi index beside its referenced ZIP in the latest release.
     addons = ET.Element("addons")
     element = ET.fromstring((REPO / "addon/addon.xml").read_text().replace("@VERSION@", v).replace("@WEBKIT_VERSION@", w).replace("@DISPLAY_VERSION@", d).encode())
     ET.SubElement(element.find('extension[@point="xbmc.addon.metadata"]'), "path").text = zip_name
@@ -102,7 +102,7 @@ def main():
     with tarfile.open(snapshot) as archive:
         archive.extractall(source, filter="data")
     project = source / "oriel-framework"
-    # Path dependencies are not included by cargo vendor.
+    # Include path dependencies explicitly because cargo vendor omits them.
     display = REPO / ".cache/display"
     shutil.copytree(display / "protocol", project / ".cache/display/protocol")
     shutil.copy(display / f"oriel-display-{d}-protocol.tar.xz", project / ".cache/display")
@@ -121,7 +121,7 @@ def main():
 
     licenses = destination / "licenses"
     licenses.mkdir()
-    # The standard library is linked into the shell, with its own third-party code.
+    # Include licenses for third-party code in the statically linked Rust standard library.
     shutil.copytree(rust / "share/doc/rust", licenses / "rust", ignore=shutil.ignore_patterns("README.md"))
     for crate in sorted(vendor.iterdir()):
         found = [file for file in crate.iterdir() if file.is_file() and LICENSE_FILE.match(file.name)]
@@ -135,7 +135,7 @@ def main():
     shutil.copy(display / "protocol/LICENSE", protocol_license / "LICENSE")
 
     package(runtime, source, licenses, destination)
-    # tools/release.sh publishes only packages of the commit it releases.
+    # Record the source commit so tools/release.sh can verify package provenance.
     (destination / "COMMIT").write_text(commit + "\n")
     for leftover in (destination / "packages", source, licenses):
         shutil.rmtree(leftover)

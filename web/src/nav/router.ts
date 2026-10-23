@@ -1,5 +1,5 @@
-// A stack of screens on a tab. Keep entries below the top mounted, so popping
-// returns to the same focus and scroll position.
+// Keep screens below the top entry mounted so Back restores their focus
+// and scroll position within the current tab.
 //
 //     export const { stack, top, root, push, pop, tab } = createRouter<Route>({ screen: 'home' });
 
@@ -23,7 +23,7 @@ export function createRouter<R>(home: R) {
     setStack((s) => [...s, entry(route)]);
   }
 
-  /** False when already at a tab. */
+  /** Return false at the tab root; otherwise remove the top screen. */
   function pop(): boolean {
     if (stack().length <= 1) return false;
     setStack((s) => s.slice(0, -1));

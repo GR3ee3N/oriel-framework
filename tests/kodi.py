@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @contextmanager
 def kodi(display=True):
-    """display: vfs.oriel.display is a Mock that draws the page; False keeps the real client."""
+    """Mock Kodi and, with display=True, the display client; False exercises the real client."""
     package = types.ModuleType("oriel")
     package.__path__ = [str(ROOT / "addon/lib/oriel")]
     with tempfile.TemporaryDirectory(prefix="oriel-test-") as temporary, patch.dict(sys.modules, {

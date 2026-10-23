@@ -9,7 +9,7 @@ from . import config
 def ensure():
     directory = config.webkit_dir()
     usr = os.path.join(directory, "usr")
-    # Kodi's ZIP install loses symlinks, so the add-on carries usr/ as a tarball.
+    # Package usr/ as a tarball to preserve symlinks through Kodi ZIP installation.
     if not os.path.isdir(usr):
         if not os.path.isfile(os.path.join(directory, "usr.tar.gz")):
             raise RuntimeError("the Oriel runtime is not installed")

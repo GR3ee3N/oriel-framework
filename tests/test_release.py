@@ -26,7 +26,7 @@ def fake_gh(args):
         if "--cleanup-tag" in args:
             subprocess.run(["git", "push", "-q", "origin", f":refs/tags/{tag}"], check=True, timeout=10)
     elif action == "create":
-        # Like gh: interrupted uploads leave a draft.
+        # Model the draft left by gh after an interrupted upload.
         directory.mkdir()
         data["releases"][tag] = "--draft" in args
         state.write_text(json.dumps(data))

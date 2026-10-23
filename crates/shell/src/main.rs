@@ -1,14 +1,12 @@
-//! Shows one page full screen with WPE WebKit, drawn by Kodi through
-//! vfs.oriel.display.
+//! Render a full-screen WPE WebKit page for Kodi to draw through vfs.oriel.display.
 //!
 //!     oriel-shell --control FIFO [--feature Name=0|1]... <uri>
 //!     oriel-shell --list-features
 //!
-//! The page's background is transparent, so Kodi shows wherever it draws
-//! nothing.
+//! Transparent page regions reveal Kodi's video or GUI underneath.
 //!
-//! A crashed web process reloads the page; the third crash within a minute
-//! exits with status 3.
+//! Reload the page after a web-process crash. Exit with status 3 on the third
+//! crash within one minute.
 
 mod control;
 mod display;
@@ -18,7 +16,7 @@ use glib::translate::{FromGlibPtrFull, ToGlibPtr, from_glib};
 use std::ptr;
 use wpe_sys as wpe;
 
-/// Kodi's GUI resolution, which the add-on scales to the output.
+/// Page dimensions match Kodi GUI resolution; the add-on scales to the output mode.
 const SIZE: (i32, i32) = (1920, 1080);
 
 pub fn monotonic() -> f64 {
@@ -54,8 +52,8 @@ fn main() {
         eprintln!("oriel-shell: --control is required");
         std::process::exit(2);
     };
-    // The add-on reads a buffer as soon as it gets it, so WebKit must only
-    // hand over finished ones (see display.rs). Set before any thread starts.
+    // Disable explicit sync before threads start so WebKit waits for rendering
+    // fences before handing buffers to the display add-on (see display.rs).
     unsafe { std::env::set_var("WPE_USE_EXPLICIT_SYNC", "0") };
 
     let display = unsafe {

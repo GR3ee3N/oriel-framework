@@ -1,4 +1,4 @@
-// Back handlers run innermost first; the caller handles an empty stack.
+// Run the innermost Back handler; leave an empty stack to the caller.
 
 import { onCleanup } from 'solid-js';
 
@@ -12,7 +12,7 @@ export function onBack(handler: () => void): void {
   });
 }
 
-/** False if there is no handler. */
+/** Invoke the current handler, or return false if none is registered. */
 export function back(): boolean {
   const handler = handlers.at(-1);
   handler?.();

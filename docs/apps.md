@@ -1,29 +1,29 @@
 # Writing an app
 
-An Oriel app is a Kodi add-on with two halves: Python that subclasses
-`oriel.App` and runs on Kodi's side, and a web page that WPE WebKit renders
-and Kodi draws in its own GUI. They talk over HTTP on `127.0.0.1:32499`: the add-on publishes
-its state to the page, and the page sends it commands.
+An Oriel app packages an `oriel.App` subclass and a web page as a Kodi
+add-on. WPE WebKit renders the page, and Kodi draws it in its GUI. The
+add-on publishes state to the page over HTTP at `127.0.0.1:32499`; the page
+sends commands to the same server.
 
-Everything listed here is the public interface. Anything else in
-`addon/lib/oriel` or `@oriel/web` may change without notice.
+This document defines the public interface. Other code in
+`addon/lib/oriel` and `@oriel/web` may change without notice.
 
-`examples/hello` is a complete app with a plain HTML page, written against
-the HTTP protocol directly. Install it next to the framework with
-`tools/deploy.sh --example`. The [Oriel Plex client](https://github.com/GR3ee3N/Oriel)
-is a video app written with Solid and `@oriel/web`.
+`examples/hello` is a complete app using plain HTML and the HTTP API.
+Install it with the framework using `tools/deploy.sh --example`. The
+[Oriel Plex client](https://github.com/GR3ee3N/Oriel) is a video app using
+Solid and `@oriel/web`.
 
 ## Add-on layout
 
 ```
-addon.xml           requires script.module.oriel.framework
-default.py          the entry point: oriel.run(MyApp)
-resources/web/      the page, served at /
-resources/mark.png  optional: shown on black until the page's first frame
+addon.xml           dependency on script.module.oriel.framework
+default.py          entry point: oriel.run(MyApp)
+resources/web/      page served at /
+resources/mark.png  optional startup image, shown on black until the first frame
 ```
 
-`addon.xml` imports the framework, and its entry point is an
-`xbmc.python.script` extension:
+Declare the framework dependency and an `xbmc.python.script` entry point
+in `addon.xml`:
 
 ```xml
 <requires>
@@ -35,16 +35,16 @@ resources/mark.png  optional: shown on black until the page's first frame
 </extension>
 ```
 
-The framework imports `script.module.oriel.webkit` and `vfs.oriel.display`;
-apps do not import them directly. The display add-on owns the browse window
-and playback dialog, while Python keeps the input and playback policy.
+The framework imports `script.module.oriel.webkit` and `vfs.oriel.display`
+for the app. Oriel display owns the browse window and playback dialog;
+Python controls input handling and playback.
 
-A path that isn't a file and has no extension gets `index.html`, so the
-page can use its own routes.
+Requests for nonexistent paths without a file extension serve
+`index.html`, allowing the page to handle its own routes.
 
-Only one Oriel app runs at a time; they share the port.
+All Oriel apps share the HTTP port, so only one can run at a time.
 
-## The Python side
+## Python API
 
 ```python
 import oriel
@@ -59,114 +59,110 @@ class MyApp(oriel.App):
 oriel.run(MyApp)
 ```
 
-`oriel.run(cls)` creates the app and blocks until it closes. Kodi calls
-back on its own threads, which only queue events; one controller thread runs
-every hook and command handler and makes every Kodi call, so the app's code
-needs no locks. Hooks must not block for long: keys and commands wait
-behind them.
+`oriel.run(cls)` creates the app and blocks until it closes. Kodi callbacks
+queue events from Kodi's threads. One controller thread runs the hooks,
+command handlers and Kodi calls, so those handlers share state without locks.
+Keep hooks short: input and commands wait for them to finish.
 
 ### `oriel.App`
 
-Override these:
+Override these hooks:
 
-| Hook | |
+| Hook | Called when / contract |
 |---|---|
-| `on_start()` | Before the page loads. |
-| `on_stop()` | On close, after WebKit has quit. |
-| `state() -> dict` | The page's state. Extend the base: `{**super().state(), ...}`. |
-| `poll()` | Four times a second. |
-| `on_key(key) -> bool` | A remote key for the page (see Keys). Return True to keep it from the page. |
-| `on_event(kind, args)` | An event the app queued itself (see below). |
-| `ours(dialog) -> bool` | Return True if the Kodi dialog with this window id is the app's own, so it doesn't hide the page. |
+| `on_start()` | Before loading the page. |
+| `on_stop()` | During shutdown, after WebKit exits. |
+| `state() -> dict` | Return page state, extending the base: `{**super().state(), ...}`. |
+| `poll()` | Every 250 ms. |
+| `on_key(key) -> bool` | Handle a named remote key (see Keys). Return `True` to prevent forwarding it to the page. |
+| `on_event(kind, args)` | Handle an app-defined queued event (see `events` below). |
+| `ours(dialog) -> bool` | Return `True` if this Kodi dialog window id belongs to the app and should leave the page visible. |
 
-and use these:
+The app also provides:
 
 | | |
 |---|---|
-| `own_screensaver` | Class attribute, default False: Kodi's screensaver runs and the page is hidden while it is up. True holds Kodi's screensaver off; the state's `screensaver` is then Kodi's delay in minutes (null if Kodi's screensaver is off), for the page's own. |
-| `data_dir` | The app's `addon_data` directory. |
-| `publish()` | Sends `state()` to the page. Call it after the state changes. |
-| `events` | A queue. `events.put((kind, *args))` from any thread calls `on_event(kind, args)` on the controller thread. Kinds the framework uses: `key`, `page`, `tick`, `hide`, `shell-exit`, `restart-shell`, `sleep`, `abort`, `display-window`, `display-gone`, and `VideoApp`'s `started` and `ended`. |
-| `close()` | Closes the app. |
+| `own_screensaver` | Class attribute, default `False`: hide the page while Kodi's screensaver runs. With `True`, suppress Kodi's screensaver and expose its idle delay in the state's `screensaver` field, in minutes, for the page to use. The field is null if Kodi's screensaver is disabled. |
+| `data_dir` | Path to the app's `addon_data` directory. |
+| `publish()` | Publish `state()` after changing app state. |
+| `events` | Call `events.put((kind, *args))` from any thread to invoke `on_event(kind, args)` on the controller thread. Framework-reserved kinds: `key`, `page`, `tick`, `hide`, `shell-exit`, `restart-shell`, `sleep`, `abort`, `display-window`, `display-gone`, plus `VideoApp`'s `started` and `ended`. |
+| `close()` | Request app shutdown. |
 
-`App.__init__` takes no arguments. An override calls `super().__init__()`
-first.
+`App.__init__` takes no arguments. Call `super().__init__()` first when
+overriding it.
 
-The app closes when the page sends `exit`, Kodi leaves the app's window
-(Home, say), the box goes to sleep, the shell exits normally, or the display
-add-on is unloaded.
+The app closes on an `exit` command, navigation away from its Kodi window
+(such as Home), device sleep, normal shell exit or display add-on unload.
 
-A web-process crash reloads the page. Three crashes within one minute
-terminate the shell. The framework restarts a failed shell at most twice
-within five minutes; a further shell failure closes the app.
+A web-process crash reloads the page; the third crash within one minute
+terminates the shell. The framework allows two shell restarts within five
+minutes, then closes the app on another failure.
 
 ### Commands
 
-`@oriel.command(name)` makes a method the handler of the page's command
-`name`. The command's fields are its keyword arguments, and its return value
-(anything `json` can encode) is the reply's result. Subclasses inherit their
-bases' commands.
+`@oriel.command(name)` registers a method as a page command handler.
+Command fields become keyword arguments; the method's JSON-serializable
+return value becomes the result. Subclasses inherit registered commands.
 
 | Outcome | Reply |
 |---|---|
 | Success | `200 {"result": …}` |
 | Unknown command, wrong fields, or `CommandError(message, "invalid")` | `400 {"error": …, "code": "invalid"}` |
 | `CommandError(message)` | `409 {"error": …, "code": "unavailable"}` |
-| The handler raised anything else | `500 {"error": …, "code": "failed"}` |
+| Unhandled handler exception | `500 {"error": …, "code": "failed"}` |
 | No reply within 10 s | `504 {"error": …, "code": "timeout"}` |
 
-The codes tell the app what to do about a failure:
+Use the failure code to decide whether to retry:
 
-- `invalid`: the command can't work as sent, so sending it again won't help.
-- `unavailable`: not in the app's current state (no playback, say); it may
-  work later.
-- `failed`: the handler broke, a bug.
-- `timeout`: the command may still have run; a handler that takes longer
-  than 10 s runs to the end. Commands that set a state can be sent again.
+- `invalid`: correct the command before retrying.
+- `unavailable`: retry when the required state exists, such as active playback.
+- `failed`: the handler raised an unexpected exception.
+- `timeout`: the result is unknown. The handler continues after the 10 s
+  response deadline. A command that sets a state can be sent again.
 
-`oriel.CommandError` is for refusals, `"invalid"` for a bad value and the
-default `"unavailable"` for anything else; the log gets one line instead of
-a traceback.
+Raise `oriel.CommandError` for an expected refusal: use `"invalid"` for
+bad values or the default `"unavailable"` for the current app state. These
+refusals produce a single log entry without a traceback.
 
-Each command documents what its success means: done, or (for work Kodi
-does in the background) that Kodi was asked, with the outcome reported in
-the state.
+Check each command's success contract. Some complete before replying;
+others submit work to Kodi and report the outcome through published state.
 
-The log records only a command's name. `@oriel.command(name, log=True)`
-also logs its fields; leave it off for commands that carry secrets.
+Command logs contain names only by default. `@oriel.command(name, log=True)`
+also logs fields; keep it disabled for commands containing secrets.
 
 The base `App` has three commands:
 
-| Command | | Success means |
+| Command | Behavior | Success means |
 |---|---|---|
-| `ready` | The page has drawn its first frame. Until then the app's mark shows and keys don't reach the page. | Done. |
-| `exit` | Closes the app. | Closed. |
-| `cpu-rendering {on}` | Makes WebKit draw the page on the CPU (true) or the GPU (false), for every Oriel app: a fallback for boxes whose GPU draws the page wrong. CPU drawing costs about twice the CPU time. | Saved. A change then restarts the shell, so the page loads again and loses its state. |
+| `ready` | Report the first rendered page frame. Until this command, the startup mark remains visible and keys are withheld from the page. | Done. |
+| `exit` | Close the app. | Closed. |
+| `cpu-rendering {on}` | Select CPU (`true`) or GPU (`false`) rendering for all Oriel apps. CPU rendering is a fallback for GPU rendering errors. | Setting saved. A changed value restarts the shell and reloads the page, losing its in-memory state. |
 
 ### State
 
-The base state is
+Base state fields:
 
-| Field | |
+| Field | Meaning |
 |---|---|
-| `cpuRendering` | Whether WebKit draws the page on the CPU: false unless set with `cpu-rendering`. |
-| `screensaver` | Minutes until the page's own screensaver; null for an app without `own_screensaver`, or when Kodi's screensaver is off. |
+| `cpuRendering` | CPU rendering enabled; defaults to false and is set by `cpu-rendering`. |
+| `screensaver` | Idle delay in minutes for the page screensaver; null unless `own_screensaver` is enabled and Kodi has a screensaver configured. |
 
-The app adds its own fields in `state()`.
+Extend `state()` to add app-specific fields.
 
-The framework's fields are always present; null means unknown or none,
-never a missing field. In commands, an optional field may be left out or
-null, and both mean its default. A command's values are checked before it
-changes anything: a value of the wrong type or out of range is `invalid`.
-`python3 -m tests.test_contract --update` captures published states in
-`web/tests/states.ts`. TypeScript checking verifies that they match
-`@oriel/web`'s state types.
+Framework state fields are always present. Null means unknown or absent;
+fields are not omitted. Optional command fields accept omission or null
+for their default. Commands validate types and ranges before changing state
+and return `invalid` for rejected values.
+
+`python3 -m tests.test_contract --update` captures published state fixtures
+in `web/tests/states.ts`. TypeScript checking verifies these against the
+`@oriel/web` types.
 
 ### Keys
 
-The window showing the page receives each key, the
-framework names it and calls `on_key`, and unless that returns True the key
-reaches the page as a `KeyboardEvent`:
+The display window forwards keys to the framework, which maps each action
+to a name and calls `on_key`. Unless the hook returns `True`, the page
+receives a `KeyboardEvent`:
 
 | Key | DOM `key` |
 |---|---|
@@ -181,19 +177,19 @@ reaches the page as a `KeyboardEvent`:
 | `pageup`, `pagedown` | `PageUp`, `PageDown` |
 | `0` to `9` | `0` to `9` |
 
-Keys reach neither `on_key` nor the page before `ready`, or while
-`VideoApp` hides the page during playback. The colour buttons and channel
-up/down aren't available.
+Keys are withheld from `on_key` and the page until `ready` and while
+`VideoApp` hides the page during playback. Colour and channel up/down
+buttons are not exposed as separate keys.
 
-During playback, `vfs.oriel.display` flags Play/Pause, Stop, Fast-forward,
-Rewind and Previous as keys Kodi also acts on, and `VideoApp` doesn't pass
-those on.
+During playback, `vfs.oriel.display` marks Play/Pause, Stop, Fast-forward,
+Rewind and Previous as handled by Kodi. `VideoApp` consumes them without
+forwarding them to the page.
 
 ### `oriel.video.VideoApp`
 
-For apps whose media Kodi plays. The page is the app's interface while
-browsing and the OSD during playback; Kodi's video runs underneath. Oriel is
-its reference app.
+Use `VideoApp` for Kodi media playback with a web interface. The page
+provides browsing and playback controls over Kodi's video. The Oriel Plex
+client is the reference app.
 
 ```python
 from oriel import run
@@ -207,84 +203,82 @@ class MyVideoApp(VideoApp):
 run(MyVideoApp)
 ```
 
-`mode()` gives the page's mode: `browse`, `osd` (the page over the video)
-or `video` (the page hidden; the base `App` never hides it). While the video plays without the OSD, Back
-stops playback and any other key except Stop shows the OSD. Keys Kodi
-keeps for itself, such as volume, do nothing there.
+`mode()` returns `browse`, `osd` (page over video) or `video` (page hidden).
+The base `App` always uses `browse`. During video playback with the page
+hidden, Back stops playback and other named keys except Stop open the OSD.
+Kodi-only actions, such as volume, leave the page hidden.
 
-Media plays from absolute URLs, or from relative paths on the media source
-that the page sets with `media-source`: the framework's proxy on
-`127.0.0.1:32500` forwards Kodi's requests to the source with the given
-headers, so tokens stay out of Kodi's URLs. When the source ends a file's
-body early, the proxy fetches the rest with a range request, so Kodi gets
-the whole body. Override
-`media_url(path)` and `is_ours(file)` to play from elsewhere; `is_ours`
-decides whether Kodi's current file is stopped when the app closes.
+Play media from absolute URLs or paths relative to a `media-source`.
+For relative paths, the proxy at `127.0.0.1:32500` adds the source headers
+to Kodi's requests, keeping tokens out of Kodi's URLs. If a source ends a
+file response early, the proxy requests the remaining bytes with a range
+request. Override `media_url(path)` and `is_ours(file)` for other sources;
+`is_ours` determines whether shutdown stops Kodi's current file.
 
-Times are in the item's timeline. A stream that begins into the item, such
-as a transcode started at a seek position, gives `streamOffset`, where it
-begins.
+Positions are seconds on the item's timeline. Set `streamOffset` to the
+start of a stream that begins partway through the item, such as a transcode
+created for a seek.
 
-| Command | | Success means |
+| Command | Behavior | Success means |
 |---|---|---|
-| `media-source {base, headers?}` | Where relative paths play from (an http or https URL), and the headers to add. A source the proxy rejects is `invalid` and leaves the previous one; a proxy that can't start or answer is `unavailable`. | The proxy uses it. |
-| `play {path, title?, session?, position?, streamOffset?, duration?, audio?, subtitle?, subtitleFile?, meta?}` | Plays a path or URL from `position`. `duration` is for streams whose length Kodi can't tell. `audio` and `subtitle` are Kodi's track indexes, applied once the file starts; subtitle -1 is none. `session` identifies the playback; `meta` comes back in the state for a page reloaded during playback. During playback, `play` replaces the file; with the same `session` a paused playback stays paused. | Kodi was asked to play; `player.state` and `ended` tell whether it does. |
-| `seek-to {seconds}` | Refused outside the stream. Kodi seeks inaccurately in transcode streams; start a new stream instead. | Kodi was asked; `time` follows. |
-| `audio {index}` | Kodi's index; keeps the current subtitle choice. | Kodi was asked; `audioIndex` follows. |
-| `subtitle {index, file?}` | Kodi's index, -1 for none, or a subtitle file's path or URL. | Kodi was asked; `subtitleIndex` follows. |
-| `set-paused {paused}` | Pauses or resumes. | Done. |
-| `stop` | Stops playback; nothing to do in browse. | Back in browse, and Kodi was asked to stop; `ended` follows. |
-| `osd-on` | Shows the page during playback, e.g. for a prompt. | Done. |
-| `osd-off` | Hides it again. | Done. |
+| `media-source {base, headers?}` | Set an HTTP/HTTPS base URL and request headers for relative paths. A rejected source returns `invalid` and preserves the previous source. Proxy startup or response failure returns `unavailable`. | Source applied to the proxy. |
+| `play {path, title?, session?, position?, streamOffset?, duration?, audio?, subtitle?, subtitleFile?, meta?}` | Play a path or URL from `position`. Supply `duration` when Kodi cannot determine it. Apply Kodi track indexes `audio` and `subtitle` after startup; subtitle -1 disables subtitles. `session` identifies playback; `meta` is returned in state to restore a reloaded page. Replacing a file within the same session preserves pause state. | Playback requested; observe `player.state` and `ended` for the outcome. |
+| `seek-to {seconds}` | Seek within the stream's bounds. For transcodes, start a stream at the target position because Kodi seeks inaccurately within them. | Seek requested; observe `time`. |
+| `audio {index}` | Select a Kodi audio index while preserving the subtitle choice. | Selection requested; observe `audioIndex`. |
+| `subtitle {index, file?}` | Select a Kodi subtitle index, use -1 to disable subtitles, or provide a subtitle file path or URL. | Selection requested; observe `subtitleIndex`. |
+| `set-paused {paused}` | Set the pause state. | Done. |
+| `stop` | Stop playback; succeeds without action in browse mode. | Browse mode restored and stop requested; observe `ended`. |
+| `osd-on` | Show the page over playback, such as for a prompt. | Done. |
+| `osd-off` | Hide the playback page. | Done. |
 
-Commands set a state rather than toggle one: a command whose state already
-holds succeeds without doing anything. Other commands that don't fit the
-current mode are refused.
+Commands that set an already active state succeed without further action.
+Commands incompatible with the current mode are refused.
 
-The state adds `mode`, `player` and `decoders`, the video codecs (ffmpeg's
-names) the box decodes in hardware, or null if it doesn't say. `player` has
+`VideoApp` adds `mode`, `player` and `decoders` to the base state.
+`decoders` lists hardware video codecs by FFmpeg name, or null when the
+hardware cannot report them. The `player` fields are:
 
-| Field | |
+| Field | Meaning |
 |---|---|
 | `state` | `idle`, `loading`, `playing` or `paused`. |
-| `time` | Seconds, in the item's timeline. |
-| `duration` | Seconds; null while neither `play` nor Kodi says (a transcode, say). |
-| `session`, `meta` | From `play`; null if it gave none. |
-| `ended` | Once playback ends: `ended`, `stopped` or `error` (Kodi failed to open or play the file); null before. |
-| `audio`, `subtitles` | Kodi's track lists; null until the session's file has started, `[]` if it has none of the kind. A new `play` sets them back to null. |
-| `audioIndex`, `subtitleIndex` | Kodi's current tracks; `subtitleIndex` is null while subtitles are off. |
+| `time` | Position in seconds on the item's timeline. |
+| `duration` | Duration in seconds; null until supplied by `play` or Kodi. |
+| `session`, `meta` | Values supplied by `play`, or null when omitted. |
+| `ended` | Null during playback; then `ended`, `stopped` or `error` if Kodi failed to open or play the file. |
+| `audio`, `subtitles` | Kodi track lists: null until the session's file starts, then an array, empty if there are no tracks of that kind. Each `play` resets them to null. |
+| `audioIndex`, `subtitleIndex` | Active Kodi track indexes; `subtitleIndex` is null when subtitles are disabled. |
 
-## The page
+## Page API
 
 ### Protocol
 
-| Request | |
+| Request | Response / behavior |
 |---|---|
-| `GET /api/events` | Server-sent events: `state` with the state as JSON, first the current one, then each published change. |
-| `POST /api/cmd` | A command, `{"cmd": name, ...fields}`. The reply is as above. |
-| `GET /api/store` | The app's saved settings, plus `run`, an id that changes each time the app starts but not when WebKit restarts. |
-| `POST /api/store` | Merges an object into the saved settings; null removes a key. Replies with the result. |
+| `GET /api/events` | Server-sent `state` events containing JSON: the current state on connection, then each published update. |
+| `POST /api/cmd` | Send `{"cmd": name, ...fields}`; command results and errors follow the format above. |
+| `GET /api/store` | Saved app settings plus `run`, an id for the current app run that survives WebKit restarts. |
+| `POST /api/store` | Merge an object into saved settings; null deletes a key. Return the merged settings. |
 
-The add-on keeps the settings in `store.json`, so they also work from a dev
-server.
+The add-on stores settings in `store.json`, shared by bundled pages and
+development-server pages.
 
-The page sends `ready` once it has drawn its first frame. Send JSON bodies
-as `text/plain`, `fetch`'s default for a string: the add-on doesn't answer
-CORS preflights, which a page on a dev server would need otherwise.
+Send `ready` after rendering the first frame. Send JSON bodies as
+`text/plain`, the default when passing a string to `fetch`. This permits
+requests from development-server pages without CORS preflights, which the
+add-on does not handle.
 
-Commands sent in parallel can run in any order: send the next one after
-the previous reply when the order matters.
+Parallel requests can execute out of order. Wait for each reply before
+sending the next command when order matters.
 
-The add-on answers only requests to `127.0.0.1:32499` or `localhost:32499`
-that come from the app's own page, the dev server's origin, or a program
-without an `Origin`; other pages get 403.
+Requests must use `127.0.0.1:32499` or `localhost:32499` as the host.
+Accepted origins are the app's page and the configured development server;
+requests without an `Origin` are also accepted. Other origins receive 403.
 
 ### `@oriel/web`
 
-`@oriel/web` is the page side for apps written with [Solid](https://www.solidjs.com/)
-and [Vite](https://vite.dev/); apps that use it must be both. It ships as
-TypeScript sources in `oriel-web-<version>.tgz` with each framework release,
-installed by URL:
+`@oriel/web` requires [Solid](https://www.solidjs.com/) and
+[Vite](https://vite.dev/). Framework releases publish its TypeScript sources
+as `oriel-web-<version>.tgz`. Install the package by release URL:
 
 ```json
 "dependencies": {
@@ -293,59 +287,60 @@ installed by URL:
 }
 ```
 
-npm needs `allow-remote=root` in `.npmrc` for the URL. In `vite.config.ts`,
-set `resolve.dedupe: ['solid-js']` so the app and the package share one Solid.
+Set `allow-remote=root` in `.npmrc` to permit the URL dependency. Set
+`resolve.dedupe: ['solid-js']` in `vite.config.ts` so the app and package
+share one Solid runtime.
 
-| Export | |
+| Export | Contract |
 |---|---|
-| `createBridge<State, Command>(initial)` | The connection to the add-on: `state` (a Solid store, with `connected`), `send(command)` (fire and forget; failures are logged), `call(command)` (a promise of the result, rejected with a `CommandFailure`), `connect()` (call once at start) and `ready()` (call after the first render). Commands from `send` and `call` reach the add-on one at a time, in the order sent. |
-| `BaseState`, `BaseCommand` | The base state and commands. |
-| `CommandFailure`, `FailureCode` | A failed `call`: the message and the reply's `code`, or `unreachable` when the add-on didn't answer or its reply was cut off. |
-| `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | `VideoApp`'s state and commands; `IDLE` is the initial `player`. |
-| `load()`, `save(changes)`, `BaseSaved` | The saved settings. |
-| `action(event)`, `Action`, `Digit` | A `KeyboardEvent`'s key name. |
+| `createBridge<State, Command>(initial)` | Create a connection with `state` (Solid store including `connected`), `send(command)` (log failures), `call(command)` (return a result promise or reject with `CommandFailure`), `connect()` (call once at startup) and `ready()` (call after the first render). Both command methods share a queue and execute in send order. |
+| `BaseState`, `BaseCommand` | Base app state and command types. |
+| `CommandFailure`, `FailureCode` | Failure message and response `code`; `unreachable` means no response or an unreadable response body. |
+| `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | Video app types and initial player state (`IDLE`). |
+| `load()`, `save(changes)`, `BaseSaved` | Load and update saved settings. |
+| `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
 | `focusable`, `setScope`, `focusOn`, `move`, `select`, `playFocused`, `focused`, `activeScope`, `Direction`, `Options` | Spatial D-pad focus. The focused element gets the `focused` class. |
-| `ScopeContext`, `useScope` | Focus scopes, one per screen. |
-| `createRouter(home)`, `Entry` | A stack of screens. |
-| `onBack(handler)`, `back()` | Back handlers, innermost first. |
-| `uuid()` | A UUID, also outside secure contexts. |
-| `ORIGIN` | The add-on's origin: empty in a build, `http://127.0.0.1:32499` under Vite's dev server. |
+| `ScopeContext`, `useScope` | Provide and read the screen focus scope. |
+| `createRouter(home)`, `Entry` | Create a screen stack with a focus scope per entry. |
+| `onBack(handler)`, `back()` | Register and invoke Back handlers, innermost first. |
+| `uuid()` | Generate a UUID in secure or insecure contexts. |
+| `ORIGIN` | API origin: empty for bundled pages, `http://127.0.0.1:32499` under the Vite development server. |
 
 ### Drawing over video
 
-The shell passes WebKit's dma-bufs to `vfs.oriel.display`. Its rendering
-control imports them as textures and draws the newest page in Kodi's GUI
-frame. A full-screen animation costs WebKit rendering and a full-screen
-texture draw in every frame, which must fit the frame budget.
+The shell passes WebKit dma-bufs to `vfs.oriel.display`, whose rendering
+control imports them as textures for Kodi's GUI frame. A full-screen
+animation requires WebKit rendering and a full-screen texture draw per
+frame; both must fit within the frame budget.
 
-A non-passive Kodi dialog hides the page until it closes.
+The framework hides the page while a non-passive Kodi dialog is open.
 
-An app doesn't start without the display add-on; Kodi shows a notification
-instead.
+App startup requires the display add-on. If it is unavailable, startup
+stops and Kodi displays a notification.
 
 ## Development
 
-### Dev settings
+### Development settings
 
-`/storage/oriel/dev/<add-on id>.json` on the box, read when the app starts:
+The app reads `/storage/oriel/dev/<add-on id>.json` on startup:
 
 ```json
 {"url": "http://<computer>:5173/", "inspector": "0.0.0.0:9226", "env": {}}
 ```
 
-- `url` loads the page from a dev server instead of `resources/web`. The
-  add-on then allows that origin on `/api`, and the page must address the
-  add-on at `http://127.0.0.1:32499` (`ORIGIN` does this under Vite).
-- `inspector` turns on WebKit's remote inspector at that address.
-- `env` sets environment variables for the shell.
+- `url`: page URL on the development server. The add-on permits this origin
+  on `/api`. The page addresses the API at `http://127.0.0.1:32499`;
+  `ORIGIN` selects it under Vite.
+- `inspector`: address for WebKit's remote inspector.
+- `env`: additional shell environment variables.
 
 ### Logs and files
 
-In the app's `addon_data` directory:
+The app's `addon_data` directory contains:
 
-- `addon.log`: the add-on and the framework.
-- `shell.log`: WebKit, with the page's console.
-- `store.json`: the page's saved settings.
+- `addon.log`: add-on and framework messages.
+- `shell.log`: WebKit output and the page's console.
+- `store.json`: saved page settings.
 
-Both logs start over each time the app opens. The framework's own setting
-(CPU rendering) is in `addon_data/script.module.oriel.framework/settings.json`.
+Both logs are overwritten each time the app opens. The shared CPU rendering
+setting is stored in `addon_data/script.module.oriel.framework/settings.json`.

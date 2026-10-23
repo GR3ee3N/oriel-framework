@@ -1,5 +1,5 @@
-// Remote keys as the page sees them, after Kodi action -> evdev -> xkb; the
-// names are the add-on's (KEYS in addon/lib/oriel/app.py).
+// Map DOM keys to the action names in addon/lib/oriel/app.py's KEYS table.
+// Input passes through Kodi actions, evdev codes and the xkb keymap first.
 
 export type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
 

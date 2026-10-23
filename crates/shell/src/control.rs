@@ -1,10 +1,10 @@
-//! Commands from the add-on, one per line on a FIFO. Kodi owns the remote,
-//! so keys come through here too.
+//! Receive newline-delimited add-on commands through a FIFO, including remote
+//! keys forwarded from Kodi.
 //!
 //!     key <evdev code> [sent]   sent: the add-on's CLOCK_MONOTONIC time
 //!     quit
 //!
-//! Opened read-write, so it doesn't hit EOF when the add-on's writer closes.
+//! Open both FIFO ends to prevent EOF when the add-on closes its writer.
 
 use crate::monotonic;
 use std::cell::RefCell;
@@ -24,7 +24,7 @@ thread_local! {
 }
 
 unsafe extern "C" {
-    // Not wrapped by the glib crate.
+    // Call the GLib API directly because the crate does not expose it.
     fn g_unix_fd_add(
         fd: c_int,
         condition: c_uint,
@@ -73,7 +73,7 @@ unsafe extern "C" fn on_readable(_: c_int, _: c_uint, _: *mut c_void) -> glib::f
             lines.push(String::from_utf8_lossy(&line).trim().to_owned());
         }
     });
-    // Outside the borrow: commands call back into other modules.
+    // Release the borrow before dispatch; handlers can call back into other modules.
     for line in lines {
         command(view, &line);
     }
@@ -98,7 +98,7 @@ fn command(view: *mut wpe::WPEView, line: &str) {
     }
 }
 
-/// `code` is an evdev code, mapped by addon/xkb.
+/// Forward an evdev code through the keymap in addon/xkb.
 fn press(view: *mut wpe::WPEView, code: u16) {
     let time = (monotonic() * 1000.0) as u32;
     let keycode = c_uint::from(code) + 8;

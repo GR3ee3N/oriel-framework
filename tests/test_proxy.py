@@ -16,10 +16,12 @@ FILE = bytes(range(256)) * 4096  # 1 MiB
 
 
 class Source(BaseHTTPRequestHandler):
-    """A file on a media server that ends the first bodies early. The server
-    has drops (bytes sent before ending each body, in order), reset (ends
-    with a reset rather than a close), etag and seen (each request's Range
-    and If-Range)."""
+    """Serve a file with controlled early response termination.
+
+    Server attributes: drops lists bytes sent per interrupted body; reset
+    selects TCP reset termination; etag identifies the file; seen records
+    each request's Range and If-Range headers.
+    """
 
     def do_GET(self):
         server = self.server
@@ -50,7 +52,7 @@ class Source(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     def handle_error(self, request, client_address):
-        pass  # the proxy let go of a body it would not splice in
+        pass  # The proxy rejected this response for range recovery.
 
 
 class ProxyResumeTests(unittest.TestCase):
@@ -74,7 +76,7 @@ class ProxyResumeTests(unittest.TestCase):
         proxy.set_source(f"http://127.0.0.1:{self.source.server_address[1]}", {})
 
     def fetch(self, range_=None):
-        """What Kodi gets: the status and the body."""
+        """Read the HTTP status and body received by Kodi."""
         headers = {"Range": range_} if range_ else {}
         with urlopen(Request(f"http://127.0.0.1:{self.port}/file.mkv", headers=headers), timeout=10) as response:
             return response.status, response.read()

@@ -1,14 +1,13 @@
-"""What the box's hardware decodes, so an app can choose between playing a
-file as it is and converting it first.
+"""Report hardware video codecs for direct-play and transcode decisions.
 
-Amlogic's video drivers list their decoders in vcodec_profile, one per
-line as `name:features;`, and a decoder the SoC lacks as `<codec>_unsupport`
-(the S922X has no AV1, for one). Kodi decodes anything else in software,
-which a 4K AV1 or HEVC file is far too much for.
+Amlogic's vcodec_profile lists one decoder per line as `name:features;`.
+Unsupported codecs appear as `<codec>_unsupport`, such as AV1 on S922X.
+Kodi can fall back to software decoding, which is too slow for 4K AV1 or
+HEVC on these devices.
 """
 PROFILE = "/sys/class/amstream/vcodec_profile"
 
-# Driver names, as ffmpeg names the codecs.
+# Map Amlogic driver names to FFmpeg codec names.
 CODECS = {
     "h264": "h264", "mh264": "h264",
     "hevc": "hevc", "hevc_fb": "hevc",
@@ -21,8 +20,9 @@ CODECS = {
 
 
 def decoders():
-    """ffmpeg codec names the hardware decodes, or None if the box does not
-    say (not an Amlogic one)."""
+    """Return hardware codec names in FFmpeg notation, or None if the driver
+    profile cannot be read.
+    """
     try:
         with open(PROFILE) as f:
             names = [line.split(":", 1)[0].strip() for line in f if ":" in line]

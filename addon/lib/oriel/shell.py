@@ -1,4 +1,4 @@
-"""Runs oriel-shell. Its output goes to shell.log with URL tokens blanked."""
+"""Run oriel-shell and capture output in shell.log with URL tokens redacted."""
 import os
 import re
 import signal
@@ -12,7 +12,7 @@ TOKEN = re.compile(r"([\w-]*token(?:=|%3D))[^&\s\"'#]+", re.IGNORECASE)
 
 
 def kill_strays(log):
-    """Kills shells left over from a crash."""
+    """Remove orphaned shell processes before starting an app."""
     for pid in os.listdir("/proc"):
         try:
             with open(f"/proc/{pid}/comm") as f:
@@ -34,7 +34,7 @@ class Shell:
 
     def start(self, url, env, stage, append_log=False):
         kill_strays(self.log)
-        # Kodi unzips the add-on without the execute bit.
+        # Restore executable permissions lost during Kodi ZIP installation.
         if not os.access(config.SHELL, os.X_OK):
             os.chmod(config.SHELL, 0o755)
         os.makedirs(os.path.dirname(config.CTL), exist_ok=True)
@@ -45,7 +45,7 @@ class Shell:
         if os.path.exists(config.CTL):
             os.unlink(config.CTL)
         os.mkfifo(config.CTL, 0o600)
-        # Kodi's LD_LIBRARY_PATH and Python paths must not reach WebKit.
+        # Build a clean environment to keep Kodi library and Python paths out of WebKit.
         env = {
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": "/storage",
@@ -55,17 +55,17 @@ class Shell:
         argv = [
             "/usr/bin/python3", config.OVERLAY, stage, config.SHELL,
             "--control", config.CTL,
-            # WebKit tracks what changed in the page and redraws only that.
+            # Propagate page damage so WebKit redraws the changed regions.
             "--feature", "PropagateDamagingInformation=1",
             "--feature", "UseDamagingInformationForCompositing=1",
-            # Separate damage rects, not one bounding box (WPE 2.54's default).
+            # Preserve separate damage rectangles to limit repainting to changed regions.
             "--feature", "UnifyDamagedRegions=0", url,
         ]
         self.process = subprocess.Popen(
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
-            # So a kill reaches WebKit's processes too.
+            # A separate process group lets shutdown kill WebKit child processes too.
             start_new_session=True)
-        # Read-write, so opening doesn't block until the shell reads.
+        # Open both FIFO ends so startup does not wait for the shell reader.
         self.ctl = os.open(config.CTL, os.O_RDWR | os.O_NONBLOCK)
         threading.Thread(target=self.read, name="oriel-shell-out", daemon=True).start()
         self.log("shell started, pid", self.process.pid, "url", url)

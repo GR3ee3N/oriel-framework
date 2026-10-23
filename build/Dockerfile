@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node
 FROM debian:13.1-slim@sha256:a347fd7510ee31a84387619a492ad6c8eb0af2f2682b916ff3e643eb076f925a
 ARG DEBIAN_SNAPSHOT
-# The shell links EGL and GLES from Debian; the box's Mali drivers provide them at runtime.
+# Link against Debian EGL/GLES libraries; use the box's Mali implementation at runtime.
 RUN rm -f /etc/apt/sources.list.d/* && \
     printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s/ trixie main\n' "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list && \
     arm64=; cross=; \

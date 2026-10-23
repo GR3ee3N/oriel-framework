@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Runs a command with WebKit's usr/ overlaid on /usr, which WebKit's
-compiled-in paths need, in a private mount namespace.
+"""Overlay WebKit's usr/ on /usr in a private mount namespace, then run a command.
+
+WebKit requires these paths because they are fixed at compile time.
 
     run-in-overlay.py <usr-dir> <command> [args...]
 """
@@ -37,11 +38,11 @@ def main():
     env = dict(os.environ)
     env.setdefault("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1")
     env.setdefault("XKB_CONFIG_EXTRA_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "xkb"))
-    # libproxy deadlocked the UI process when the inspector server started early.
+    # Use the dummy proxy resolver to prevent libproxy deadlocks during inspector startup.
     env.setdefault("GIO_USE_PROXY_RESOLVER", "dummy")
     env.setdefault("SSL_CERT_FILE", "/etc/ssl/cert.pem")
 
-    # A pty keeps WebKit's console output line-buffered.
+    # Use a pseudo-terminal so WebKit flushes console output line by line.
     pid, fd = os.forkpty()
     if pid == 0:
         os.execvpe(argv[0], argv, env)

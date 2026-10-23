@@ -1,4 +1,4 @@
-//! Hand-written bindings for what the shell uses of WPE WebKit and WPEPlatform.
+//! Handwritten WPE WebKit and WPEPlatform bindings used by the shell.
 
 #![allow(non_camel_case_types)]
 
@@ -37,7 +37,7 @@ pub struct WPERectangle {
 pub type RenderBufferFn =
     unsafe extern "C" fn(*mut WPEView, *mut WPEBuffer, *const WPERectangle, c_uint, *mut *mut GError) -> gboolean;
 
-/// Only up to the vfunc we replace.
+/// Partial class layout ending at the virtual function overridden by the shell.
 #[repr(C)]
 pub struct WPEViewClass {
     pub parent_class: GObjectClass,
