@@ -71,9 +71,11 @@ function restore(scope: string): void {
 export function focusable(el: HTMLElement, options: Options = {}): void {
   const entry = { ...options, scope: options.scope ?? useScope() };
   entries.set(el, entry);
-  if (entry.scope === activeScope() && (!current() || (entry.autofocus && implicit))) {
+  const wanted = () => entry.scope === activeScope() && (!current() || (entry.autofocus && implicit));
+  if (wanted()) {
+    // An earlier element in the same mount can take focus first, so check again when the task runs.
     queueMicrotask(() => {
-      if (entry.scope === activeScope()) restore(entry.scope);
+      if (wanted()) restore(entry.scope);
     });
   }
   onCleanup(() => {
