@@ -28,12 +28,15 @@ in `addon.xml`:
 ```xml
 <requires>
   <import addon="xbmc.python" version="3.1.0"/>
-  <import addon="script.module.oriel.framework" version="0.3.0"/>
+  <import addon="script.module.oriel.framework" version="<version>"/>
 </requires>
 <extension point="xbmc.python.script" library="default.py">
   <provides>executable</provides>
 </extension>
 ```
+
+Set `<version>` to the oldest framework release that has everything the app
+uses; Kodi then installs or updates the framework to at least that release.
 
 The framework imports `script.module.oriel.webkit` and `vfs.oriel.display`
 for the app. Oriel display owns the browse window and playback dialog;
