@@ -49,9 +49,10 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, port, web_root, store_path, on_command, origin):
+    def __init__(self, port, web_root, files_root, store_path, on_command, origin):
         super().__init__(("127.0.0.1", port), Handler)
         self.web_root = os.path.realpath(web_root)
+        self.files_root = os.path.realpath(files_root)
         self.store_path = store_path
         # Controller callback returns the command's (HTTP status, response body).
         self.on_command = on_command
@@ -115,8 +116,10 @@ class Handler(BaseHTTPRequestHandler):
             self.events()
         elif path == "/api/store":
             self.json(self.server.store())
+        elif path.startswith("/files/"):
+            self.static(self.server.files_root, path.removeprefix("/files"), routes=False)
         else:
-            self.static(path)
+            self.static(self.server.web_root, path)
 
     def do_POST(self):
         if not self.trusted():
@@ -182,15 +185,14 @@ class Handler(BaseHTTPRequestHandler):
             with self.server.lock:
                 self.server.clients.discard(q)
 
-    def static(self, path):
-        root = self.server.web_root
+    def static(self, root, path, routes=True):
         file = os.path.realpath(os.path.join(root, path.lstrip("/")))
         if not (file == root or file.startswith(root + os.sep)):
             return self.send_error(404)
-        if os.path.isdir(file):
+        if os.path.isdir(file) and routes:
             file = os.path.join(file, "index.html")
         if not os.path.isfile(file):
-            if "." in os.path.basename(path):
+            if not routes or "." in os.path.basename(path):
                 return self.send_error(404)
             file = os.path.join(root, "index.html")  # Serve extensionless app routes.
         with open(file, "rb") as f:
@@ -199,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", mimetypes.guess_type(file)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-cache")
+        # A development-server page loads fonts from /files/ only with CORS.
+        self.cors()
         self.end_headers()
         self.wfile.write(data)
 

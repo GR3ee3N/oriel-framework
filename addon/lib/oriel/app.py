@@ -137,6 +137,7 @@ class App:
 
     def __init__(self):
         self.data_dir = config.data_dir()
+        self.files_dir = os.path.join(self.data_dir, "files")
         # Identifies this app run; a reloaded page or restarted WebKit keeps it.
         self.run_id = uuid.uuid4().hex
         self.stage = webkit.ensure()
@@ -172,7 +173,8 @@ class App:
         # Release the single display connection if startup fails.
         try:
             self.server = Server(
-                config.PORT, os.path.join(addon_path, "resources", "web"), os.path.join(self.data_dir, "store.json"),
+                config.PORT, os.path.join(addon_path, "resources", "web"), self.files_dir,
+                os.path.join(self.data_dir, "store.json"),
                 self.page_command, "{0.scheme}://{0.netloc}".format(urlsplit(url)) if url else None)
             self.shell = Shell(
                 os.path.join(self.data_dir, "shell.log"), lambda code: self.events.put(("shell-exit", code)), log)

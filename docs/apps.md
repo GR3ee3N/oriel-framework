@@ -84,6 +84,7 @@ The app also provides:
 |---|---|
 | `own_screensaver` | Class attribute, default `False`: hide the page while Kodi's screensaver runs. With `True`, suppress Kodi's screensaver and expose its idle delay in the state's `screensaver` field, in minutes, for the page to use. The field is null if Kodi's screensaver is disabled. |
 | `data_dir` | Path to the app's `addon_data` directory. |
+| `files_dir` | `data_dir/files`, served to the page at `/files/`. The app creates it and keeps there what it downloads for the page; Kodi keeps it through add-on updates. |
 | `publish()` | Publish `state()` after changing app state. |
 | `events` | Call `events.put((kind, *args))` from any thread to invoke `on_event(kind, args)` on the controller thread. Framework-reserved kinds: `key`, `page`, `tick`, `hide`, `shell-exit`, `restart-shell`, `sleep`, `abort`, `display-window`, `display-gone`, plus `VideoApp`'s `started` and `ended`. |
 | `close()` | Request app shutdown. |
@@ -267,6 +268,7 @@ hardware cannot report them. The `player` fields are:
 | `POST /api/cmd` | Send `{"cmd": name, ...fields}`; command results and errors follow the format above. |
 | `GET /api/store` | Saved app settings. |
 | `POST /api/store` | Merge an object into saved settings; null deletes a key. Return the merged settings. |
+| `GET /files/<path>` | A file from the app's `files_dir`, or 404. |
 
 The add-on stores settings in `store.json`, shared by bundled pages and
 development-server pages.
@@ -343,6 +345,7 @@ The app's `addon_data` directory contains:
 - `addon.log`: add-on and framework messages.
 - `shell.log`: WebKit output and the page's console.
 - `store.json`: saved page settings.
+- `files/`: the app's `files_dir`.
 
 Both logs are overwritten each time the app opens. The shared CPU rendering
 setting is stored in `addon_data/script.module.oriel.framework/settings.json`.

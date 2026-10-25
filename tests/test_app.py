@@ -149,6 +149,19 @@ class AppTests(unittest.TestCase):
         self.app.server.origin = "http://dev.example:5173"
         self.assertEqual(self.request("/api/cmd", b'{"cmd": "add", "amount": 1}', Origin=self.app.server.origin)[0], 200)
 
+    def test_files_are_served_from_the_files_directory_only(self):
+        files = self.directory / "files" / "fonts"
+        files.mkdir(parents=True)
+        (files / "a.css").write_text("body {}")
+        self.app.server.origin = "http://dev.example:5173"
+        response = urlopen(Request(f"{self.base}/files/fonts/a.css", headers={"Origin": self.app.server.origin}), timeout=3)
+        with response:
+            self.assertEqual(response.read(), b"body {}")
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], self.app.server.origin)
+        for path in ("/files/fonts/missing.css", "/files/fonts", "/files/../store.json", "/files/%2e%2e/addon.log"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path)[0], 404)
+
     def test_only_opted_in_command_fields_are_logged(self):
         self.cmd(cmd="add", amount=2)
         self.cmd(cmd="refuse")
