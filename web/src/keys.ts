@@ -17,7 +17,6 @@ const ACTIONS: Record<string, Action> = {
   ArrowDown: 'down',
   Enter: 'select',
   Escape: 'back',
-  Backspace: 'back',
   F1: 'info',
   ContextMenu: 'menu',
   MediaPlay: 'playpause',

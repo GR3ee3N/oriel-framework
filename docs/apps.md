@@ -183,7 +183,9 @@ Keys are withheld from `on_key` and the page until `ready` and while
 buttons are not exposed as separate keys.
 
 The page decides what each key does. Focus, D-pad navigation and Back are the
-app's own; `action(event)` in `@oriel/web` names the key.
+app's own; `action(event)` in `@oriel/web` names the remote's keys. Other
+keys from a keyboard, such as Backspace, reach the page as typed and have no
+action name.
 
 During playback, `vfs.oriel.display` marks Play/Pause, Stop, Fast-forward,
 Rewind and Previous as handled by Kodi. `VideoApp` consumes them without
