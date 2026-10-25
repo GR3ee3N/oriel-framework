@@ -14,6 +14,7 @@ def states():
         oriel.screensaver_minutes = lambda: 10
         app = oriel.App()
         app.server.server_close()
+        app.run_id = "run"
         base = app.state()
 
         class Video(video.VideoApp):
@@ -21,6 +22,7 @@ def states():
 
         app = Video()
         app.server.server_close()
+        app.run_id = "run"
         app.decoders = ["h264", "hevc"]
         app.player = Mock(**{"isPlayingVideo.return_value": True, "getTime.return_value": 30.0,
                              "getTotalTime.return_value": 0.0})

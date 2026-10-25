@@ -144,6 +144,7 @@ Base state fields:
 
 | Field | Meaning |
 |---|---|
+| `run` | Id of the current app run. A reloaded page or restarted WebKit sees the same id; a new start of the app gets a new one. |
 | `cpuRendering` | CPU rendering enabled; defaults to false and is set by `cpu-rendering`. |
 | `screensaver` | Idle delay in minutes for the page screensaver; null unless `own_screensaver` is enabled and Kodi has a screensaver configured. |
 
@@ -259,7 +260,7 @@ hardware cannot report them. The `player` fields are:
 |---|---|
 | `GET /api/events` | Server-sent `state` events containing JSON: the current state on connection, then each published update. |
 | `POST /api/cmd` | Send `{"cmd": name, ...fields}`; command results and errors follow the format above. |
-| `GET /api/store` | Saved app settings plus `run`, an id for the current app run that survives WebKit restarts. |
+| `GET /api/store` | Saved app settings. |
 | `POST /api/store` | Merge an object into saved settings; null deletes a key. Return the merged settings. |
 
 The add-on stores settings in `store.json`, shared by bundled pages and
@@ -298,7 +299,7 @@ Set `allow-remote=root` in `.npmrc` to permit the URL dependency.
 | `BaseState`, `BaseCommand` | Base app state and command types. |
 | `CommandFailure`, `FailureCode` | Failure message and response `code`; `unreachable` means no response or an unreadable response body. |
 | `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | Video app types and initial player state (`IDLE`). |
-| `load()`, `save(changes)`, `BaseSaved` | Load and update saved settings. |
+| `load()`, `save(changes)` | Load and update saved settings. |
 | `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
 | `ORIGIN` | API origin: empty for the bundled page, which the add-on serves on port 32499; `http://127.0.0.1:32499` for a page from a development server. |
 

@@ -52,12 +52,12 @@ test('each state from the add-on reaches listeners as a new object; a lost strea
   const stop = bridge.onState((s) => seen.push(s));
   const before = bridge.state();
   bridge.connect();
-  stream.listeners.state({ data: '{"cpuRendering": true, "screensaver": null}' });
-  expect(bridge.state()).toEqual({ cpuRendering: true, screensaver: null, connected: true });
+  stream.listeners.state({ data: '{"run": "r", "cpuRendering": true, "screensaver": null}' });
+  expect(bridge.state()).toEqual({ run: 'r', cpuRendering: true, screensaver: null, connected: true });
   expect(bridge.state()).not.toBe(before);
   stream.onerror();
   expect(bridge.state().connected).toBe(false);
   stop();
-  stream.listeners.state({ data: '{"cpuRendering": false, "screensaver": null}' });
+  stream.listeners.state({ data: '{"run": "r", "cpuRendering": false, "screensaver": null}' });
   expect(seen).toHaveLength(2);
 });

@@ -16,6 +16,7 @@ import queue
 import threading
 import time
 import traceback
+import uuid
 from urllib.parse import urlsplit
 
 import xbmc
@@ -136,6 +137,8 @@ class App:
 
     def __init__(self):
         self.data_dir = config.data_dir()
+        # Identifies this app run; a reloaded page or restarted WebKit keeps it.
+        self.run_id = uuid.uuid4().hex
         self.stage = webkit.ensure()
         self.events = queue.Queue()
         self.exiting = False
@@ -194,6 +197,7 @@ class App:
     def state(self):
         """Return page state; subclasses extend the base fields."""
         return {
+            "run": self.run_id,
             "cpuRendering": self.settings.get("cpuRendering", False),
             "screensaver": self.screensaver,
         }

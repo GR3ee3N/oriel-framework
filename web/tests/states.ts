@@ -5,12 +5,14 @@ import type { BaseState } from '../src/bridge';
 import type { VideoState } from '../src/video';
 
 export const base = {
+  "run": "run",
   "cpuRendering": false,
   "screensaver": null
 } satisfies Omit<BaseState, 'connected'>;
 
 export const video = [
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",
@@ -32,6 +34,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -55,6 +58,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -78,6 +82,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -101,6 +106,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -140,6 +146,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",
@@ -163,6 +170,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -184,6 +192,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -205,6 +214,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "video",
@@ -226,6 +236,7 @@ export const video = [
     ]
   },
   {
+    "run": "run",
     "cpuRendering": false,
     "screensaver": 10,
     "mode": "browse",

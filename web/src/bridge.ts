@@ -5,6 +5,8 @@
 
 export interface BaseState {
   connected: boolean;
+  /** Id of the current app run; it survives page reloads and WebKit restarts. Empty until connected. */
+  run: string;
   /** Shared framework CPU rendering setting; defaults to false (GPU). */
   cpuRendering: boolean;
   /** Kodi idle delay in minutes for apps using own_screensaver; null for
@@ -56,7 +58,7 @@ export interface Bridge<S extends BaseState, C extends { cmd: string }> {
 export function createBridge<S extends BaseState, C extends { cmd: string }>(
   initial: Omit<S, keyof BaseState>,
 ): Bridge<S, C> {
-  let state = { ...initial, connected: false, cpuRendering: false, screensaver: null } as S;
+  let state = { ...initial, connected: false, run: '', cpuRendering: false, screensaver: null } as S;
   const listeners = new Set<(state: S) => void>();
   const update = (next: S) => {
     state = next;

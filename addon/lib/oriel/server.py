@@ -4,7 +4,7 @@
     GET  /api/events   server-sent `state` events
     POST /api/cmd      command result {"result"}, or {"error", "code"}
                        with the HTTP status defined by FAILURES
-    GET  /api/store    saved settings plus the current app `run` id
+    GET  /api/store    saved settings
     POST /api/store    merge settings; null deletes a key
 
 Do not serve media to Kodi here: its playback threads must not wait on
@@ -21,7 +21,6 @@ import mimetypes
 import os
 import queue
 import threading
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Map command failures to HTTP status: invalid request, unavailable app state,
@@ -61,7 +60,6 @@ class Server(ThreadingHTTPServer):
         self.clients = set()
         self.state = {}
         self.serving = False
-        self.run = uuid.uuid4().hex
 
     def store(self, changes=None):
         with self.lock:
@@ -116,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/events":
             self.events()
         elif path == "/api/store":
-            self.json({**self.server.store(), "run": self.server.run})
+            self.json(self.server.store())
         else:
             self.static(path)
 
