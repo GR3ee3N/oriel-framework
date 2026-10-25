@@ -300,7 +300,6 @@ Set `allow-remote=root` in `.npmrc` to permit the URL dependency.
 | `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | Video app types and initial player state (`IDLE`). |
 | `load()`, `save(changes)`, `BaseSaved` | Load and update saved settings. |
 | `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
-| `uuid()` | Generate a UUID in secure or insecure contexts. |
 | `ORIGIN` | API origin: empty for the bundled page, which the add-on serves on port 32499; `http://127.0.0.1:32499` for a page from a development server. |
 
 ### Drawing over video
