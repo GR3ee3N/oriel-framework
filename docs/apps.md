@@ -42,6 +42,11 @@ Python controls input handling and playback.
 Requests for nonexistent paths without a file extension serve
 `index.html`, allowing the page to handle its own routes.
 
+WebKit has only DejaVu Sans as a system font. Ship every other font the
+page shows, such as for Chinese, Japanese, Korean or emoji, and load it with
+`@font-face`: from `resources/web/`, or from `/files/` for fonts the app
+downloads later.
+
 All Oriel apps share the HTTP port, so only one can run at a time.
 
 ## Python API
