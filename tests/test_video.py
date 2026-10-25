@@ -127,6 +127,13 @@ class VideoTests(unittest.TestCase):
         self.assertTrue(app.intercept_key("back", self.oriel.now(), False))
         app.stop_playback.assert_called_once()
 
+    def test_the_app_takes_keys_before_playback_handling(self):
+        app = self.app_in("playing")
+        app.on_key = lambda key: key == "back"
+        app.on_action(10, self.oriel.now(), False)
+        app.stop_playback.assert_not_called()
+        self.assertEqual(app.phase, "playing")
+
     def tracks_app(self, phase, kodi):
         app = self.app_in(phase)
         app.media_url = lambda path: path

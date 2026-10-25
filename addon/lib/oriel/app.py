@@ -187,7 +187,7 @@ class App:
         """Release app resources after the shell and page have exited."""
 
     def on_key(self, key):
-        """Handle a named key from KEYS; return True to prevent page delivery."""
+        """Handle a named key from KEYS before VideoApp and the page; return True to keep it from both."""
         return False
 
     def page_shown(self):
@@ -356,9 +356,12 @@ class App:
     def on_action(self, action_id, sent, kodi):
         key = KEY_NAMES.get(action_id)
         log(f"action {action_id} ({key}) in {self.phase}, queued {(now() - sent) * 1e3:.1f} ms")
-        if action_id == ACTION_BUILT_IN_FUNCTION or self.intercept_key(key, sent, kodi):
+        if action_id == ACTION_BUILT_IN_FUNCTION:
             return
-        if key and self.phase != "starting" and self.page_shown() and not self.on_key(key):
+        named = key is not None and self.phase != "starting"
+        if named and self.on_key(key) or self.intercept_key(key, sent, kodi):
+            return
+        if named and self.page_shown():
             self.shell.key(KEYS[key][1], sent)
 
     def intercept_key(self, key, sent, kodi):

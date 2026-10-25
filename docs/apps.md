@@ -74,7 +74,7 @@ Override these hooks:
 | `on_stop()` | During shutdown, after WebKit exits. |
 | `state() -> dict` | Return page state, extending the base: `{**super().state(), ...}`. |
 | `poll()` | Every 250 ms. |
-| `on_key(key) -> bool` | Handle a named remote key (see Keys). Return `True` to prevent forwarding it to the page. |
+| `on_key(key) -> bool` | Handle a named remote key (see Keys) before `VideoApp`'s playback handling and the page. Return `True` to keep it from both. |
 | `on_event(kind, args)` | Handle an app-defined queued event (see `events` below). |
 | `ours(dialog) -> bool` | Return `True` if this Kodi dialog window id belongs to the app and should leave the page visible. |
 
@@ -178,9 +178,10 @@ receives a `KeyboardEvent`:
 | `pageup`, `pagedown` | `PageUp`, `PageDown` |
 | `0` to `9` | `0` to `9` |
 
-Keys are withheld from `on_key` and the page until `ready` and while
-`VideoApp` hides the page during playback. Colour and channel up/down
-buttons are not exposed as separate keys.
+Keys are withheld from `on_key` and the page until `ready`. While
+`VideoApp` hides the page during playback, `on_key` still receives them and
+the page doesn't. Colour and channel up/down buttons are not exposed as
+separate keys.
 
 The page decides what each key does. Focus, D-pad navigation and Back are the
 app's own; `action(event)` in `@oriel/web` names the remote's keys. Other
@@ -212,7 +213,9 @@ run(MyVideoApp)
 `mode()` returns `browse`, `osd` (page over video) or `video` (page hidden).
 The base `App` always uses `browse`. During video playback with the page
 hidden, Back stops playback and other named keys except Stop open the OSD.
-Kodi-only actions, such as volume, leave the page hidden.
+Kodi-only actions, such as volume, leave the page hidden. Override `on_key`
+to handle a key differently; Kodi still acts on the keys it handles itself,
+such as Play/Pause.
 
 Play media from absolute URLs or paths relative to a `media-source`.
 For relative paths, the proxy at `127.0.0.1:32500` adds the source headers
