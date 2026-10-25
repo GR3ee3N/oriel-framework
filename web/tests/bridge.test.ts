@@ -31,3 +31,33 @@ test('commands keep their order and a failed request does not block the next one
   expect(await second).toBe(42);
   expect(fetch.mock.calls.map(([, options]) => JSON.parse(options.body).cmd)).toEqual(['ready', 'exit']);
 });
+
+test('each state from the add-on reaches listeners as a new object; a lost stream clears connected', () => {
+  let stream!: { listeners: Record<string, (e: { data: string }) => void>; onerror: () => void };
+  vi.stubGlobal(
+    'EventSource',
+    class {
+      listeners: Record<string, (e: { data: string }) => void> = {};
+      onerror = () => {};
+      constructor() {
+        stream = this;
+      }
+      addEventListener(kind: string, listener: (e: { data: string }) => void) {
+        this.listeners[kind] = listener;
+      }
+    },
+  );
+  const bridge = createBridge({});
+  const seen: unknown[] = [];
+  const stop = bridge.onState((s) => seen.push(s));
+  const before = bridge.state();
+  bridge.connect();
+  stream.listeners.state({ data: '{"cpuRendering": true, "screensaver": null}' });
+  expect(bridge.state()).toEqual({ cpuRendering: true, screensaver: null, connected: true });
+  expect(bridge.state()).not.toBe(before);
+  stream.onerror();
+  expect(bridge.state().connected).toBe(false);
+  stop();
+  stream.listeners.state({ data: '{"cpuRendering": false, "screensaver": null}' });
+  expect(seen).toHaveLength(2);
+});

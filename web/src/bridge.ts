@@ -1,8 +1,7 @@
 // Synchronize page state and commands with the Kodi add-on.
 //
-//     export const { state, send, call, connect, ready } = createBridge<State, Command>({ ... });
-
-import { createStore, reconcile } from 'solid-js/store';
+//     const bridge = createBridge<State, Command>({ ... });
+//     bridge.onState((state) => render(state));
 
 export interface BaseState {
   connected: boolean;
@@ -39,7 +38,10 @@ export class CommandFailure extends Error {
 export const ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:32499' : '';
 
 export interface Bridge<S extends BaseState, C extends { cmd: string }> {
-  state: S;
+  /** The latest state. Each update replaces the object rather than changing it. */
+  state(): S;
+  /** Call listener with each new state; the returned function removes it. */
+  onState(listener: (state: S) => void): () => void;
   /** Queue a command and log any failure. send and call share an ordered queue. */
   send(command: C | BaseCommand): void;
   /** Queue a command and return its result, rejecting with CommandFailure on error. */
@@ -53,8 +55,12 @@ export interface Bridge<S extends BaseState, C extends { cmd: string }> {
 export function createBridge<S extends BaseState, C extends { cmd: string }>(
   initial: Omit<S, keyof BaseState>,
 ): Bridge<S, C> {
-  // Use the base store type because Solid setters cannot resolve generic state keys.
-  const [state, setState] = createStore<BaseState>({ ...initial, connected: false, cpuRendering: false, screensaver: null });
+  let state = { ...initial, connected: false, cpuRendering: false, screensaver: null } as S;
+  const listeners = new Set<(state: S) => void>();
+  const update = (next: S) => {
+    state = next;
+    for (const listener of listeners) listener(state);
+  };
 
   const post = async <R>(command: C | BaseCommand): Promise<R> => {
     // A string body defaults to text/plain, permitting requests without CORS preflight.
@@ -84,14 +90,21 @@ export function createBridge<S extends BaseState, C extends { cmd: string }>(
     const events = new EventSource(`${ORIGIN}/api/events`);
     events.addEventListener('state', (e) => {
       const next = JSON.parse((e as MessageEvent<string>).data) as Omit<S, 'connected'>;
-      setState(reconcile({ ...next, connected: true }));
+      update({ ...next, connected: true } as S);
     });
-    events.onerror = () => setState('connected', false);
+    events.onerror = () => {
+      if (state.connected) update({ ...state, connected: false });
+    };
   };
 
   const ready = (): void => {
     requestAnimationFrame(() => requestAnimationFrame(() => send({ cmd: 'ready' })));
   };
 
-  return { state: state as S, send, call, connect, ready };
+  const onState = (listener: (state: S) => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+
+  return { state: () => state, onState, send, call, connect, ready };
 }

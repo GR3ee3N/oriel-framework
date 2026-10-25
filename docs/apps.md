@@ -279,24 +279,21 @@ requests without an `Origin` are also accepted. Other origins receive 403.
 
 ### `@oriel/web`
 
-`@oriel/web` requires [Solid](https://www.solidjs.com/) and
-[Vite](https://vite.dev/). Framework releases publish its TypeScript sources
-as `oriel-web-<version>.tgz`. Install the package by release URL:
+`@oriel/web` requires [Vite](https://vite.dev/) and works with any UI
+library or none. Framework releases publish its TypeScript sources as
+`oriel-web-<version>.tgz`. Install the package by release URL:
 
 ```json
 "dependencies": {
-  "@oriel/web": "https://github.com/GR3ee3N/oriel-framework/releases/download/v<version>/oriel-web-<version>.tgz",
-  "solid-js": "^1.9.15"
+  "@oriel/web": "https://github.com/GR3ee3N/oriel-framework/releases/download/v<version>/oriel-web-<version>.tgz"
 }
 ```
 
-Set `allow-remote=root` in `.npmrc` to permit the URL dependency. Set
-`resolve.dedupe: ['solid-js']` in `vite.config.ts` so the app and package
-share one Solid runtime.
+Set `allow-remote=root` in `.npmrc` to permit the URL dependency.
 
 | Export | Contract |
 |---|---|
-| `createBridge<State, Command>(initial)` | Create a connection with `state` (Solid store including `connected`), `send(command)` (log failures), `call(command)` (return a result promise or reject with `CommandFailure`), `connect()` (call once at startup) and `ready()` (call after the first render). Both command methods share a queue and execute in send order. |
+| `createBridge<State, Command>(initial)` | Create a connection with `state()` (the latest state, including `connected`; each update is a new object), `onState(listener)` (call `listener` with each new state; return a function that removes it), `send(command)` (log failures), `call(command)` (return a result promise or reject with `CommandFailure`), `connect()` (call once at startup) and `ready()` (call after the first render). Both command methods share a queue and execute in send order. |
 | `BaseState`, `BaseCommand` | Base app state and command types. |
 | `CommandFailure`, `FailureCode` | Failure message and response `code`; `unreachable` means no response or an unreadable response body. |
 | `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | Video app types and initial player state (`IDLE`). |

@@ -74,7 +74,6 @@ def package(runtime, source, licenses, destination):
     (web_package / "package.json").write_text((REPO / "web/package.json").read_text().replace("@VERSION@", v))
     shutil.copy(REPO / "LICENSE", web_package / "LICENSE")
     (web_package / "SOURCE.txt").write_text(url + "\n")
-    (web_package / "THIRD-PARTY-NOTICES.txt").write_text("solid-js is supplied by the consuming app and is not bundled in this package.\n")
     tar_tree(web_package, files / f"oriel-web-{v}.tgz")
     shutil.copytree(licenses, source / "licenses")
     tar_tree(source, files / f"{source.name}.tar.xz")
