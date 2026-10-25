@@ -34,8 +34,9 @@ export class CommandFailure extends Error {
   }
 }
 
-// Development-server pages still run in the box's WebKit and reach its loopback API.
-export const ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:32499' : '';
+// The add-on serves the bundled page on its API port. A page from a
+// development server still runs in the box's WebKit and reaches the same API.
+export const ORIGIN = globalThis.location?.port === '32499' ? '' : 'http://127.0.0.1:32499';
 
 export interface Bridge<S extends BaseState, C extends { cmd: string }> {
   /** The latest state. Each update replaces the object rather than changing it. */

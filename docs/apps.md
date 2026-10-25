@@ -279,9 +279,10 @@ requests without an `Origin` are also accepted. Other origins receive 403.
 
 ### `@oriel/web`
 
-`@oriel/web` requires [Vite](https://vite.dev/) and works with any UI
-library or none. Framework releases publish its TypeScript sources as
-`oriel-web-<version>.tgz`. Install the package by release URL:
+`@oriel/web` works with any UI library or none. Framework releases publish
+its TypeScript sources as `oriel-web-<version>.tgz`, so the app's build has
+to compile TypeScript, as Vite and esbuild do. Install the package by
+release URL:
 
 ```json
 "dependencies": {
@@ -300,7 +301,7 @@ Set `allow-remote=root` in `.npmrc` to permit the URL dependency.
 | `load()`, `save(changes)`, `BaseSaved` | Load and update saved settings. |
 | `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
 | `uuid()` | Generate a UUID in secure or insecure contexts. |
-| `ORIGIN` | API origin: empty for bundled pages, `http://127.0.0.1:32499` under the Vite development server. |
+| `ORIGIN` | API origin: empty for the bundled page, which the add-on serves on port 32499; `http://127.0.0.1:32499` for a page from a development server. |
 
 ### Drawing over video
 
@@ -325,8 +326,8 @@ The app reads `/storage/oriel/dev/<add-on id>.json` on startup:
 ```
 
 - `url`: page URL on the development server. The add-on permits this origin
-  on `/api`. The page addresses the API at `http://127.0.0.1:32499`;
-  `ORIGIN` selects it under Vite.
+  on `/api`. The page addresses the API at `http://127.0.0.1:32499`, as
+  `ORIGIN` does for any page not served on that port.
 - `inspector`: address for WebKit's remote inspector.
 - `env`: additional shell environment variables.
 
