@@ -10,7 +10,7 @@ It provides two packages:
 - `script.module.oriel.framework`: the Kodi add-on with the Python API and
   Rust shell that hosts WebKit.
 - `@oriel/web`: the TypeScript package for add-on communication, saved
-  settings, playback controls and remote navigation.
+  settings, playback controls and remote key names.
 
 Apps depend on the framework. The framework imports the Oriel WebKit
 runtime and Oriel display binary add-on as dependencies.

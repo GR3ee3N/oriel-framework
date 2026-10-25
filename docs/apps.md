@@ -181,6 +181,9 @@ Keys are withheld from `on_key` and the page until `ready` and while
 `VideoApp` hides the page during playback. Colour and channel up/down
 buttons are not exposed as separate keys.
 
+The page decides what each key does. Focus, D-pad navigation and Back are the
+app's own; `action(event)` in `@oriel/web` names the key.
+
 During playback, `vfs.oriel.display` marks Play/Pause, Stop, Fast-forward,
 Rewind and Previous as handled by Kodi. `VideoApp` consumes them without
 forwarding them to the page.
@@ -299,10 +302,6 @@ share one Solid runtime.
 | `VideoState`, `VideoCommand`, `Player`, `Mode`, `AudioTrack`, `SubtitleTrack`, `IDLE` | Video app types and initial player state (`IDLE`). |
 | `load()`, `save(changes)`, `BaseSaved` | Load and update saved settings. |
 | `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
-| `focusable`, `setScope`, `focusOn`, `move`, `select`, `playFocused`, `focused`, `activeScope`, `Direction`, `Options` | Spatial D-pad focus. The focused element gets the `focused` class. |
-| `ScopeContext`, `useScope` | Provide and read the screen focus scope. |
-| `createRouter(home)`, `Entry` | Create a screen stack with a focus scope per entry. |
-| `onBack(handler)`, `back()` | Register and invoke Back handlers, innermost first. |
 | `uuid()` | Generate a UUID in secure or insecure contexts. |
 | `ORIGIN` | API origin: empty for bundled pages, `http://127.0.0.1:32499` under the Vite development server. |
 

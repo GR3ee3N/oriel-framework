@@ -2,7 +2,7 @@
   "name": "@oriel/web",
   "version": "@VERSION@",
   "license": "GPL-3.0-or-later",
-  "description": "The page side of Oriel apps: the bridge to the app's Kodi add-on, saved settings, and D-pad navigation",
+  "description": "The page side of Oriel apps: the bridge to the app's Kodi add-on, saved settings, and remote key names",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GR3ee3N/oriel-framework.git",

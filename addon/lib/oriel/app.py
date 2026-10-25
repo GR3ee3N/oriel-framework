@@ -28,7 +28,7 @@ from .server import Server, failure
 from .shell import Shell
 
 # Map remote key names to (Kodi actions, page evdev code). xkb/ maps codes
-# WebKit does not recognize to DOM keys listed in web/src/nav/keys.ts.
+# WebKit does not recognize to DOM keys listed in web/src/keys.ts.
 # Kodi routes colour buttons to other windows and maps channel keys to
 # page up/down, so neither has a separate page action.
 KEYS = {
