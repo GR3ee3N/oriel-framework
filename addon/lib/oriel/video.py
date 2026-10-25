@@ -301,8 +301,8 @@ class VideoApp(App):
             # Kodi handles these actions; its stop completes through on_ended.
             if key != "stop" and self.phase == "playing":
                 self.show_osd()
-        elif self.phase == "playing" and key == "back":
-            if sent - self.osd_off_at > BACK_GRACE:
+        elif self.phase in ("loading", "playing") and key == "back":
+            if self.phase == "loading" or sent - self.osd_off_at > BACK_GRACE:
                 self.stop_playback("back during playback")
         elif self.phase == "playing":
             self.show_osd()
@@ -440,9 +440,9 @@ class VideoApp(App):
             self.polls += 1
             if self.polls % 4 == 1:
                 self.update_tracks()
-        elif self.phase == "loading" and now() - self.loading_since > 30 and not self.player.isPlayingVideo():
+        elif self.phase == "loading" and now() - self.loading_since > 30:
             # Detect startup failures that Kodi did not report through a callback.
-            self.on_ended("did not start")
+            self.stop_playback("did not start")
 
     def update_tracks(self):
         r = jsonrpc("Player.GetProperties", playerid=1, properties=TRACK_PROPERTIES)

@@ -127,6 +127,29 @@ class VideoTests(unittest.TestCase):
         self.assertTrue(app.intercept_key("back", self.oriel.now(), False))
         app.stop_playback.assert_called_once()
 
+    def test_back_during_loading_stops_even_just_after_the_osd_closed(self):
+        app = self.app_in("loading")
+        app.osd_off_at = self.oriel.now()
+        self.assertTrue(app.intercept_key("back", app.osd_off_at, False))
+        app.stop_playback.assert_called_once()
+
+    def test_loading_times_out_without_an_av_started_callback(self):
+        for playing in (False, True):
+            with self.subTest(playing=playing):
+                app = self.app_in("loading")
+                app.player.isPlayingVideo.return_value = playing
+                app.loading_since = 100
+                with patch.object(self.video, "now", return_value=130):
+                    app.poll()
+                app.stop_playback.assert_not_called()
+                app.stop_playback = self.video.VideoApp.stop_playback.__get__(app)
+                with patch.object(self.video, "now", return_value=131):
+                    app.poll()
+                self.assertEqual(app.phase, "browse")
+                self.assertEqual(app.player_state["ended"], "error")
+                app.show_page.assert_called_once()
+                self.video.xbmc.executebuiltin.assert_called_with("PlayerControl(Stop)")
+
     def test_the_app_takes_keys_before_playback_handling(self):
         app = self.app_in("playing")
         app.on_key = lambda key: key == "back"
