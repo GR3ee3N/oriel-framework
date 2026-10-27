@@ -56,7 +56,7 @@ python3 build/check-shell.py "$SHELL_BINARY" "$DEV"
 ADDON=$CACHE/runtime/script.module.oriel.framework
 rm -rf "$CACHE/runtime"
 mkdir -p "$ADDON"
-rsync -a --exclude __pycache__ addon/ "$ADDON/"
+rsync -a --exclude __pycache__ --exclude .DS_Store addon/ "$ADDON/"
 install -D -m 755 "$SHELL_BINARY" "$ADDON/bin/oriel-shell"
 sed -i "s/@VERSION@/$VERSION/g; s/@WEBKIT_VERSION@/$WEBKIT_VERSION/g; s/@DISPLAY_VERSION@/$DISPLAY_VERSION/g" "$ADDON/addon.xml"
 echo "Built $ADDON with the ARM64 shell."

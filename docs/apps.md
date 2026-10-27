@@ -233,6 +233,10 @@ file response early, the proxy requests the remaining bytes with a range
 request. Override `media_url(path)` and `is_ours(file)` for other sources;
 `is_ours` determines whether shutdown stops Kodi's current file.
 
+If Kodi hasn't started the file after 30 seconds, the framework stops
+playback & returns to browse mode. The player state becomes `idle` with
+`ended` set to `error`.
+
 Positions are seconds on the item's timeline. Set `streamOffset` to the
 start of a stream that begins partway through the item, such as a transcode
 created for a seek.

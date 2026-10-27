@@ -16,11 +16,11 @@ cd "$REPO"
 STAGE=.cache/runtime/script.module.oriel.framework
 [ -f "$STAGE/bin/oriel-shell" ] || { echo "run tools/build.sh first" >&2; exit 1; }
 ssh "$BOX" "mkdir -p $BASE/tools/box"
-rsync -rlt --exclude __pycache__ tools/box/ "$BOX:$BASE/tools/box/"
+rsync -rlt --exclude __pycache__ --exclude .DS_Store tools/box/ "$BOX:$BASE/tools/box/"
 
 install_addon() {
   # Retain installed files until their replacements finish transferring.
-  rsync -rlpt --exclude __pycache__ --delete-after --delay-updates "$1/" "$BOX:$ADDONS/$2/"
+  rsync -rlpt --exclude __pycache__ --exclude .DS_Store --delete-after --delay-updates "$1/" "$BOX:$ADDONS/$2/"
   ssh "$BOX" "kodi-send --action=UpdateLocalAddons >/dev/null"
   ssh "$BOX" "python3 $BASE/tools/box/kodirpc.py --enable '$2' >/dev/null"
   echo "installed $2"
