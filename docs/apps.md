@@ -344,7 +344,11 @@ The app reads `/storage/oriel/dev/<add-on id>.json` on startup:
   on `/api`. The page addresses the API at `http://127.0.0.1:32499`, as
   `ORIGIN` does for any page not served on that port.
 - `inspector`: address for WebKit's remote inspector.
-- `env`: additional shell environment variables.
+- `env`: additional shell environment variables. With `ORIEL_FRAME_LOG` set
+  to a file path, the shell writes a line for each frame Kodi draws:
+  `rendered sent drawn`, the `CLOCK_MONOTONIC` seconds at which WebKit
+  finished the frame, the shell sent it to `vfs.oriel.display` and Kodi
+  first drew it.
 
 ### Logs and files
 

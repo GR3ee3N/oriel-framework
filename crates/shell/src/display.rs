@@ -9,6 +9,10 @@
 //! sync so WebKit waits for each rendering fence before calling render_buffer.
 //!
 //! Exit with status 4 if the add-on disconnects or refuses the protocol version.
+//!
+//! With ORIEL_FRAME_LOG set to a path, write one line per drawn frame:
+//! `rendered sent drawn`, CLOCK_MONOTONIC seconds for when WebKit finished
+//! the frame, when it went to the add-on and when Kodi first drew it.
 
 use glib::ffi::{GTRUE, gboolean};
 use glib::gobject_ffi;
@@ -16,6 +20,8 @@ use oriel_display_protocol::{self as protocol, Msg, kind};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_int, c_uint, c_void};
+use std::fs::File;
+use std::io::{LineWriter, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use wpe_sys as wpe;
 
@@ -34,6 +40,7 @@ struct Display {
     /// Rendered frame waiting for the submitted frame to be drawn.
     waiting: Option<u32>,
     stats: Stats,
+    frame_log: Option<LineWriter<File>>,
 }
 
 #[derive(Default)]
@@ -41,6 +48,7 @@ struct Stats {
     since: f64,
     frames: u32,
     drawn: u32,
+    rendered_at: HashMap<u32, f64>,
     sent_at: HashMap<u32, f64>,
     latency: f64,
     latency_max: f64,
@@ -106,6 +114,13 @@ pub fn install(view: *mut wpe::WPEView) -> std::io::Result<()> {
     if unsafe { libc::connect(fd, (&raw const addr).cast(), len) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
+    let frame_log = std::env::var_os("ORIEL_FRAME_LOG").and_then(|path| match File::create(&path) {
+        Ok(file) => Some(LineWriter::new(file)),
+        Err(e) => {
+            eprintln!("oriel-shell: frame log {}: {e}", path.to_string_lossy());
+            None
+        }
+    });
     SOCKET.set(socket.as_raw_fd());
     send(&Msg::new(kind::HELLO, protocol::VERSION), &[])?;
     unsafe {
@@ -122,6 +137,7 @@ pub fn install(view: *mut wpe::WPEView) -> std::io::Result<()> {
         in_flight: false,
         waiting: None,
         stats: Stats { since: crate::monotonic(), ..Stats::default() },
+        frame_log,
     }));
     println!("oriel-shell: drawing through vfs.oriel.display");
     Ok(())
@@ -213,6 +229,7 @@ unsafe extern "C" fn render_buffer(
             d.held.insert(id, buffer);
         }
         d.stats.frames += 1;
+        d.stats.rendered_at.insert(id, crate::monotonic());
         if d.in_flight {
             d.waiting = Some(id);
             return;
@@ -271,10 +288,15 @@ unsafe extern "C" fn on_readable(fd: c_int, _: c_uint, _: *mut c_void) -> gboole
                             rendered.push(b);
                         }
                     }
+                    let finished = d.stats.rendered_at.remove(&msg.id);
                     if let Some(t) = d.stats.sent_at.remove(&msg.id) {
-                        let latency = crate::monotonic() - t;
+                        let now = crate::monotonic();
+                        let latency = now - t;
                         d.stats.latency += latency;
                         d.stats.latency_max = d.stats.latency_max.max(latency);
+                        if let (Some(log), Some(r)) = (d.frame_log.as_mut(), finished) {
+                            let _ = writeln!(log, "{r:.6} {t:.6} {now:.6}");
+                        }
                     }
                     d.stats.drawn += 1;
                 }
@@ -298,7 +320,9 @@ unsafe extern "C" fn on_readable(fd: c_int, _: c_uint, _: *mut c_void) -> gboole
                 s.latency / f64::from(s.drawn.max(1)) * 1e3,
                 s.latency_max * 1e3
             );
-            *s = Stats { since: now, ..Stats::default() };
+            // Keep the timestamps of frames still awaiting their draw.
+            let (rendered_at, sent_at) = (std::mem::take(&mut s.rendered_at), std::mem::take(&mut s.sent_at));
+            *s = Stats { since: now, rendered_at, sent_at, ..Stats::default() };
         }
     });
     unsafe {

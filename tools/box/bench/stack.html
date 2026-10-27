@@ -1,0 +1,317 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Oriel stack benchmark</title>
+<!--
+  Fixed workloads for bench.py. Every image is drawn here from a seeded
+  generator, so each box renders the same pixels without a network. The page
+  reads the cases to run and the number of keys from /config, reports each phase to bench.py at /event and moves on by itself, except
+  for the keys phase, which waits for the keys bench.py sends through Kodi.
+-->
+<style>
+  html { background: transparent; color: #fff; font: 28px/1.3 sans-serif; overflow: hidden; }
+  body { margin: 0; width: 1920px; height: 1080px; background: #0c1620; position: relative; overflow: hidden; }
+  .layer { position: absolute; inset: 0; }
+  #label { position: absolute; right: 60px; bottom: 40px; opacity: .7; }
+  #small { position: absolute; left: 80px; top: 80px; width: 120px; height: 120px; }
+  .tile { position: absolute; width: 240px; height: 135px; border-radius: 12px; will-change: transform; }
+  .poster { position: absolute; width: 240px; height: 360px; }
+  .poster img { width: 240px; height: 360px; border-radius: 10px; display: block; }
+  .poster span { display: block; margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .backdrop { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  #panel { position: absolute; left: 120px; top: 560px; width: 900px; height: 360px; border-radius: 24px;
+    background: #0008; filter: blur(0); box-shadow: 0 20px 60px #000a; }
+  #panel::before { content: ''; position: absolute; inset: 0; border-radius: 24px;
+    background: linear-gradient(90deg, #000c, #0000); }
+  .line { height: 30px; white-space: nowrap; overflow: hidden; }
+  .focus-grid { position: absolute; left: 120px; top: 160px; }
+  .focus-grid .poster { transition: transform 150ms ease-out; }
+  .focus-grid .poster.focused { transform: scale(1.08); z-index: 1; }
+  .focus-grid .poster.focused img { outline: 6px solid #fff; outline-offset: 4px; }
+</style>
+<div id="stage" class="layer"></div>
+<div id="label"></div>
+<script>
+'use strict';
+const API = 'http://127.0.0.1:32499/api/cmd';
+const stage = document.getElementById('stage');
+const label = document.getElementById('label');
+const report = (data) => fetch('/event', { method: 'POST', body: JSON.stringify(data) });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const frame = () => new Promise(requestAnimationFrame);
+const quantile = (sorted, p) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : null;
+const median = (values) => quantile([...values].sort((a, b) => a - b), .5);
+
+function random(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Draw a reproducible picture: a gradient, soft circles and stripes. */
+function picture(width, height, seed) {
+  const r = random(seed);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext('2d');
+  const hue = Math.floor(r() * 360);
+  const gradient = g.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, `hsl(${hue} 60% 30%)`);
+  gradient.addColorStop(1, `hsl(${(hue + 90) % 360} 50% 12%)`);
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, width, height);
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = `hsl(${(hue + r() * 120) % 360} 70% ${30 + r() * 40}% / ${0.15 + r() * 0.3})`;
+    g.beginPath();
+    g.arc(r() * width, r() * height, (0.02 + r() * 0.2) * Math.max(width, height), 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 0.08;
+  for (let y = 0; y < height; y += 6) {
+    g.fillStyle = r() < 0.5 ? '#fff' : '#000';
+    g.fillRect(0, y, width, 2);
+  }
+  return canvas;
+}
+
+const toBlob = (canvas) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+const WORDS = 'the of a night river glass winter signal harbour last orbit quiet empire garden machine silver distant city'.split(' ');
+function title(r) {
+  return Array.from({ length: 2 + Math.floor(r() * 4) }, () => WORDS[Math.floor(r() * WORDS.length)]).join(' ');
+}
+
+function posterElement(src, text) {
+  const el = document.createElement('div');
+  el.className = 'poster';
+  const img = document.createElement('img');
+  img.src = src;
+  const span = document.createElement('span');
+  span.textContent = text;
+  el.append(img, span);
+  return el;
+}
+
+/** Run update on every frame for seconds and summarise frame and script timing. */
+async function animate(name, seconds, setup, update) {
+  stage.replaceChildren();
+  const state = setup ? await setup() : null;
+  label.textContent = name;
+  await frame();
+  await frame();
+  await report({ event: 'start', phase: name });
+  const times = [];
+  const work = [];
+  const start = performance.now();
+  if (update) {
+    for (;;) {
+      const t = await frame();
+      times.push(t);
+      if (t - start >= seconds * 1000) break;
+      const t0 = performance.now();
+      update(state, (t - start) / 1000, times.length);
+      work.push(performance.now() - t0);
+    }
+  } else {
+    await sleep(seconds * 1000);
+  }
+  const gaps = times.slice(1).map((t, i) => t - times[i]).sort((a, b) => a - b);
+  const sortedWork = work.sort((a, b) => a - b);
+  await report({
+    event: 'end', phase: name,
+    raf_frames: times.length,
+    raf_p50_ms: quantile(gaps, .5), raf_p95_ms: quantile(gaps, .95), raf_max_ms: gaps.at(-1) ?? null,
+    script_p95_ms: quantile(sortedWork, .95),
+  });
+}
+
+/** Deterministic script work: numeric sort, object churn, JSON and string matching. */
+function scriptWork() {
+  const r = random(7);
+  const numbers = new Float64Array(200000).map(() => r());
+  numbers.sort();
+  const items = Array.from({ length: 30000 }, (_, i) => ({ id: i, title: title(r), year: 1950 + Math.floor(r() * 75), rating: r() * 10 }));
+  const parsed = JSON.parse(JSON.stringify(items));
+  const matched = parsed.filter((item) => /\b(night|winter)\b/.test(item.title)).map((item) => item.title.toUpperCase());
+  parsed.sort((a, b) => a.title.localeCompare(b.title) || a.year - b.year);
+  return numbers[100] + matched.length + parsed[0].id;
+}
+
+async function measureScript() {
+  stage.replaceChildren();
+  label.textContent = 'script';
+  await report({ event: 'start', phase: 'script' });
+  const runs = [];
+  for (let i = 0; i < 5; i++) {
+    const t0 = performance.now();
+    scriptWork();
+    runs.push(performance.now() - t0);
+    await sleep(50);
+  }
+  await report({ event: 'end', phase: 'script', script_ms: median(runs) });
+}
+
+async function measureDecode() {
+  stage.replaceChildren();
+  label.textContent = 'decode';
+  const blobs = [];
+  for (let i = 0; i < 8; i++) blobs.push(await toBlob(picture(1920, 1080, 100 + i)));
+  await report({ event: 'start', phase: 'decode' });
+  const runs = [];
+  for (const blob of blobs) {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.src = url;
+    const t0 = performance.now();
+    await img.decode();
+    runs.push(performance.now() - t0);
+    URL.revokeObjectURL(url);
+  }
+  await report({ event: 'end', phase: 'decode', decode_ms: median(runs) });
+}
+
+let posters = [];
+let backdrops = [];
+
+async function prepare() {
+  const r = random(1);
+  for (let i = 0; i < 24; i++) posters.push({ src: picture(240, 360, 1000 + i).toDataURL('image/jpeg', 0.85), title: title(r) });
+  for (let i = 0; i < 2; i++) backdrops.push(picture(1920, 1080, 2000 + i).toDataURL('image/jpeg', 0.85));
+  // Decode everything once so the animated phases measure drawing, not decoding.
+  await Promise.all([...posters.map((p) => p.src), ...backdrops].map((src) => { const i = new Image(); i.src = src; return i.decode(); }));
+}
+
+const phases = [
+  ['idle', 5, null, null],
+  ['small-paint', 5, () => {
+    const el = document.createElement('div');
+    el.id = 'small';
+    stage.append(el);
+    return el;
+  }, (el, t, n) => { el.style.background = n % 2 ? '#e0b060' : '#60b0e0'; }],
+  ['full-paint', 5, null, (_, t, n) => { document.body.style.background = n % 2 ? '#0c1620' : '#16202c'; }],
+  ['transform', 5, () => {
+    const r = random(3);
+    return Array.from({ length: 24 }, (_, i) => {
+      const el = document.createElement('div');
+      el.className = 'tile';
+      el.style.background = `hsl(${Math.floor(r() * 360)} 60% 50%)`;
+      el.style.left = `${120 + (i % 6) * 280}px`;
+      el.style.top = `${120 + Math.floor(i / 6) * 200}px`;
+      stage.append(el);
+      return el;
+    });
+  }, (tiles, t) => tiles.forEach((el, i) => { el.style.transform = `translate(${Math.sin(t * 2 + i) * 40}px, ${Math.cos(t * 2 + i) * 30}px)`; })],
+  ['scroll', 5, () => {
+    const grid = document.createElement('div');
+    grid.className = 'layer';
+    for (let row = 0; row < 6; row++) {
+      for (let col = 0; col < 7; col++) {
+        const p = posters[(row * 7 + col) % posters.length];
+        const el = posterElement(p.src, p.title);
+        el.style.left = `${120 + col * 260}px`;
+        el.style.top = `${80 + row * 440}px`;
+        grid.append(el);
+      }
+    }
+    stage.append(grid);
+    return grid;
+  }, (grid, t) => { grid.style.transform = `translateY(${-((t * 600) % 1320)}px)`; }],
+  ['crossfade', 5, () => {
+    const imgs = backdrops.map((src) => {
+      const img = document.createElement('img');
+      img.className = 'backdrop';
+      img.src = src;
+      stage.append(img);
+      return img;
+    });
+    const panel = document.createElement('div');
+    panel.id = 'panel';
+    stage.append(panel);
+    return { imgs, panel };
+  }, ({ imgs, panel }, t) => {
+    imgs[1].style.opacity = (Math.sin(t * 2) + 1) / 2;
+    panel.style.filter = `blur(${(Math.sin(t * 3) + 1) * 4}px)`;
+  }],
+  ['layout', 5, () => {
+    const r = random(5);
+    const box = document.createElement('div');
+    box.style.cssText = 'position:absolute;left:120px;top:60px;width:1200px;columns:3;column-gap:40px';
+    const lines = Array.from({ length: 300 }, () => {
+      const el = document.createElement('div');
+      el.className = 'line';
+      el.textContent = title(r) + ' ' + title(r);
+      box.append(el);
+      return el;
+    });
+    stage.append(box);
+    return { box, lines };
+  }, ({ box }, t) => { box.style.width = `${1100 + Math.round(Math.sin(t * 4) * 150)}px`; }],
+];
+
+/** Move a focus ring over a poster grid for each key bench.py sends through Kodi. */
+async function keys() {
+  stage.replaceChildren();
+  label.textContent = 'keys';
+  const cols = 7;
+  const grid = document.createElement('div');
+  grid.className = 'focus-grid';
+  const cells = posters.slice(0, 21).map((p, i) => {
+    const el = posterElement(p.src, p.title);
+    el.style.left = `${(i % cols) * 260}px`;
+    el.style.top = `${Math.floor(i / cols) * 440}px`;
+    grid.append(el);
+    return el;
+  });
+  stage.append(grid);
+  let at = 0;
+  cells[at].classList.add('focused');
+  const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols };
+  let count = 0;
+  let done;
+  const finished = new Promise((resolve) => { done = resolve; });
+  const onKey = (event) => {
+    const step = moves[event.key];
+    if (step === undefined) return;
+    count++;
+    const next = at + step;
+    if (next >= 0 && next < cells.length) {
+      cells[at].classList.remove('focused');
+      at = next;
+      cells[at].classList.add('focused');
+    }
+    if (count >= expected) done();
+  };
+  const expected = config.keys;
+  document.addEventListener('keydown', onKey);
+  await frame();
+  await report({ event: 'start', phase: 'keys' });
+  await Promise.race([finished, sleep(30000)]);
+  document.removeEventListener('keydown', onKey);
+  await sleep(500);
+  await report({ event: 'end', phase: 'keys', keys_seen: count });
+}
+
+let config;
+
+(async () => {
+  config = await (await fetch('/config')).json();
+  const run = (name) => config.cases.includes(name);
+  label.textContent = 'preparing';
+  await frame();
+  await fetch(API, { method: 'POST', body: JSON.stringify({ cmd: 'ready' }) });
+  await prepare();
+  await report({ event: 'prepared' });
+  for (const [name, seconds, setup, update] of phases.filter(([name]) => run(name))) {
+    await animate(name, seconds, setup, update);
+    document.body.style.background = '';
+    await sleep(1000);
+  }
+  if (run('script')) await measureScript();
+  if (run('decode')) await measureDecode();
+  if (run('keys')) await keys();
+  await report({ event: 'done' });
+})().catch((error) => report({ event: 'error', message: String(error && error.stack || error) }));
+</script>
