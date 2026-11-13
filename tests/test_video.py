@@ -29,7 +29,9 @@ class FakeKodi:
         self.seeks = 0
         self.play, self.pause = Mock(), Mock()
 
-    def properties(self, method, playerid, properties):
+    def properties(self, method, playerid, properties=None, **kwargs):
+        if method != "Player.GetProperties":
+            return None
         subtitle = {} if self.subtitle is None else {"index": self.subtitle, "isforced": self.subtitle in self.forced}
         return {"currentaudiostream": {"index": self.audio}, "currentsubtitle": subtitle,
                 "subtitleenabled": self.enabled,
@@ -149,6 +151,102 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(app.player_state["ended"], "error")
                 app.show_page.assert_called_once()
                 self.video.xbmc.executebuiltin.assert_called_with("PlayerControl(Stop)")
+
+    def started(self, duration=None, paused=False):
+        """An app that played from 1080p60 and has just started, with Kodi at 42 s."""
+        app = self.app_in("loading")
+        app.open_osd = Mock()
+        app.show_osd = Mock()
+        app.duration = duration
+        app.resync_output = "1080p60hz"
+        app.start_streams = {"paused": paused}
+        app.player.getTime.return_value = 42.0
+        app.player.getTotalTime.return_value = 0
+        self.video.jsonrpc = Mock(return_value=None)
+        with patch.object(self.video, "now", return_value=100):
+            app.on_started()
+        return app
+
+    def plays(self):
+        """The play values of Player.PlayPause calls so far."""
+        return [c.kwargs["play"] for c in self.video.jsonrpc.call_args_list if c.args == ("Player.PlayPause",)]
+
+    def poll_at(self, app, t, mode):
+        with patch.object(self.video, "now", return_value=t), \
+             patch.object(self.video, "output_mode", return_value=mode):
+            app.poll()
+
+    def test_playback_holds_through_the_output_switch(self):
+        for switched_at in (100.25, 101.75):
+            with self.subTest(switched_at=switched_at):
+                app = self.started()
+                self.poll_at(app, switched_at - 0.25, "1080p60hz")
+                self.assertEqual(self.plays(), [])
+                self.poll_at(app, switched_at, "2160p24hz")
+                self.assertEqual(self.plays(), [False])
+                self.poll_at(app, switched_at + 1.25, "2160p24hz")
+                app.player.seekTime.assert_not_called()
+                self.poll_at(app, switched_at + 1.5, "2160p24hz")
+                app.player.seekTime.assert_called_once_with(42.0)
+                self.assertEqual(self.plays(), [False])
+                self.poll_at(app, switched_at + 1.75, "2160p24hz")
+                self.assertEqual(self.plays(), [False, True])
+                self.poll_at(app, switched_at + 10, "1080p60hz")
+                app.player.seekTime.assert_called_once()
+                self.assertEqual(self.plays(), [False, True])
+
+    def test_each_mode_change_restarts_the_settle_time(self):
+        app = self.started()
+        self.poll_at(app, 100.5, "2160p24hz")
+        self.poll_at(app, 101.5, "2160p24hz-dv")
+        self.poll_at(app, 102.75, "2160p24hz-dv")
+        app.player.seekTime.assert_not_called()
+        self.poll_at(app, 103, "2160p24hz-dv")
+        app.player.seekTime.assert_called_once_with(42.0)
+        self.assertEqual(self.plays(), [False])
+
+    def test_a_switch_before_av_started_also_holds(self):
+        app = self.started()
+        self.poll_at(app, 100.25, "2160p24hz")
+        self.poll_at(app, 101.75, "2160p24hz")
+        app.player.seekTime.assert_called_once_with(42.0)
+
+    def test_playback_continues_without_a_mode_switch(self):
+        app = self.started()
+        for t in (100.5, 101.5, 102.25, 103):
+            self.poll_at(app, t, "1080p60hz")
+        self.poll_at(app, 104, "2160p24hz")
+        self.poll_at(app, 106, "2160p24hz")
+        app.player.seekTime.assert_not_called()
+        self.assertEqual(self.plays(), [])
+
+    def test_the_hold_reports_playing(self):
+        app = self.started()
+        self.video.xbmc.getCondVisibility.return_value = True
+        for t in (100.5, 101, 102, 102.25):
+            self.poll_at(app, t, "2160p24hz")
+            self.assertEqual(app.player_state["state"], "playing")
+        self.poll_at(app, 102.5, "2160p24hz")
+        self.assertEqual(app.player_state["state"], "paused")
+
+    def test_pausing_from_the_page_ends_the_hold(self):
+        app = self.started()
+        self.poll_at(app, 100.5, "2160p24hz")
+        self.video.jsonrpc.return_value = "OK"
+        app.page_set_paused(True)
+        for t in (102, 102.25, 105):
+            self.poll_at(app, t, "2160p24hz")
+        app.player.seekTime.assert_not_called()
+        self.assertEqual(self.plays(), [False, False])
+
+    def test_starts_without_a_hold(self):
+        for duration, paused in ((3600, False), (None, True)):
+            with self.subTest(duration=duration, paused=paused):
+                app = self.started(duration=duration, paused=paused)
+                self.poll_at(app, 100.5, "2160p24hz")
+                self.poll_at(app, 105, "2160p24hz")
+                app.player.seekTime.assert_not_called()
+                self.assertEqual(self.plays(), [])
 
     def test_the_app_takes_keys_before_playback_handling(self):
         app = self.app_in("playing")

@@ -36,6 +36,14 @@ BACK_GRACE = 1.0
 REFRESH_ON_START_STOP = 2
 # Maximum wait in seconds for the browse display mode to return.
 MODE_WAIT = 5.0
+# Seconds after playback starts to watch for the output switching to the
+# file's mode.
+SWITCH_WAIT = 2.0
+# Seconds after a switch of the output mode before the paused playback seeks,
+# by which Kodi has reopened the audio output and the TV has locked to the mode.
+RESYNC_SETTLE = 1.5
+# Seconds between that seek and resuming playback.
+RESYNC_RESUME = 0.25
 
 
 def output_mode():
@@ -133,6 +141,12 @@ class VideoApp(App):
         # Retain the browse output mode and the deadline for restoring page visibility.
         self.browse_mode = None
         self.show_by = None
+        # Output mode last seen during startup, when the held playback seeks and
+        # resumes, and when to stop waiting for a switch; see resync.
+        self.resync_output = None
+        self.resync_at = None
+        self.resume_at = None
+        self.resync_until = None
 
     def media_url(self, path):
         """Resolve page media and subtitle paths to Kodi playback URLs."""
@@ -226,10 +240,15 @@ class VideoApp(App):
         self.stream_offset = stream_offset
         self.duration = duration
         self.subtitle_asked = None
+        self.resync_output = output_mode()
+        self.resync_at = self.resume_at = self.resync_until = None
         # Defer track selection until on_started; subtitle -1 disables subtitles.
         self.start_streams = {
             "audio": audio, "subtitle": subtitle, "subtitleFile": subtitleFile, "paused": paused,
         }
+        log("playback requested: position", position, "stream offset", stream_offset,
+            "audio", audio, "subtitle", subtitle, "subtitle file", bool(subtitleFile),
+            "paused", bool(paused), "output", output_mode())
         # Retain metadata so a reloaded page can restore playback state.
         self.player_state = player_state("loading", int(position), duration and int(duration), session, meta)
         self.publish()
@@ -255,6 +274,8 @@ class VideoApp(App):
         self.require("playing", "osd")
         if not isinstance(paused, bool):
             raise CommandError("paused must be true or false", "invalid")
+        # The viewer's choice ends a startup hold.
+        self.resync_at = self.resume_at = self.resync_until = None
         # Set an explicit pause state because Kodi may already have handled Play/Pause.
         if jsonrpc("Player.PlayPause", playerid=1, play=not paused) is None:
             raise CommandError("Kodi refused")
@@ -330,11 +351,16 @@ class VideoApp(App):
         # on active tracks, using the last requested subtitle while its report is pending.
         tracks = jsonrpc("Player.GetProperties", playerid=1, properties=[
             "currentaudiostream", "currentsubtitle", "subtitleenabled", "subtitles"]) or {}
+        log("tracks: active audio", (tracks.get("currentaudiostream") or {}).get("index"),
+            "subtitle", (tracks.get("currentsubtitle") or {}).get("index"),
+            "visible", tracks.get("subtitleenabled"), "pending subtitle", self.subtitle_asked,
+            "requested audio", audio, "subtitle", subtitle, "file", bool(file))
         index, shown = self.subtitle_asked or (
             (tracks.get("currentsubtitle") or {}).get("index"), tracks.get("subtitleenabled"))
         showing = index if shown else None
         replaced = False
         if audio is not None and (tracks.get("currentaudiostream") or {}).get("index") != audio:
+            log("switching audio to", audio)
             self.player.setAudioStream(audio)
             # Audio changes replace or hide forced subtitles according to audio language,
             # even when the current forced subtitle is hidden.
@@ -342,6 +368,7 @@ class VideoApp(App):
         if subtitle == KEEP:
             subtitle = (-1 if showing is None else showing) if replaced else None
         if file:
+            log("loading subtitle file")
             self.player.setSubtitles(self.media_url(file))
             self.subtitle_asked = None
         elif subtitle is None:
@@ -353,6 +380,7 @@ class VideoApp(App):
             # Showing a hidden subtitle does not restore its demuxed packets;
             # reselect it unless it is already visible.
             if replaced or showing != subtitle:
+                log("switching subtitle to", subtitle, "after audio replacement", replaced)
                 self.player.setSubtitleStream(subtitle)
             self.player.showSubtitles(True)
             self.subtitle_asked = (subtitle, True)
@@ -360,9 +388,14 @@ class VideoApp(App):
     def on_started(self):
         if self.phase != "loading":
             return
+        log("playback A/V started after", f"{now() - self.loading_since:.3f}", "s, output", output_mode())
         streams = self.start_streams or {}
         self.select_tracks(streams.get("audio"), streams.get("subtitle"), streams.get("subtitleFile"))
         self.phase = "playing"
+        # Watch for a switch of the output mode; see resync. Kodi seeks
+        # inaccurately in streams whose duration the page supplies.
+        if self.duration is None and not streams.get("paused"):
+            self.resync_until = now() + SWITCH_WAIT
         self.publish()
         self.open_osd()
         if streams.get("paused"):
@@ -428,10 +461,14 @@ class VideoApp(App):
                     self.on_ended("no longer playing")
                 return
             self.idle = 0
+            holding = self.resync_until is not None
+            if holding:
+                self.resync()
             try:
                 end = self.end()
+                paused = not holding and xbmc.getCondVisibility("Player.Paused")
                 self.set_player(
-                    state="paused" if xbmc.getCondVisibility("Player.Paused") else "playing",
+                    state="paused" if paused else "playing",
                     time=int(self.stream_offset + self.player.getTime()),
                     duration=None if end is None else int(end))
             except RuntimeError:
@@ -444,10 +481,48 @@ class VideoApp(App):
             # Detect startup failures that Kodi did not report through a callback.
             self.stop_playback("did not start")
 
+    def resync(self):
+        """Kodi starts the audio before it switches the output to the file's
+        mode, and with passthrough the sound can then stay late. Kodi delays
+        the switch while paused, so playback pauses once the output switches,
+        stays paused until RESYNC_SETTLE after the last switch, seeks to its
+        position and resumes. The state reports playing meanwhile."""
+        t = now()
+        mode = output_mode()
+        if self.resume_at is not None:
+            if t >= self.resume_at:
+                self.resume()
+        elif mode != self.resync_output:
+            if self.resync_at is None:
+                log("pausing while the output switches to", mode)
+                jsonrpc("Player.PlayPause", playerid=1, play=False)
+            self.resync_output = mode
+            self.resync_at = t + RESYNC_SETTLE
+            self.resync_until = max(self.resync_until, self.resync_at)
+        elif self.resync_at is not None and t >= self.resync_at:
+            try:
+                position = self.player.getTime()
+            except RuntimeError:
+                self.resume()
+                return
+            log("restarting playback at", f"{position:.3f}", "after the output switched to", mode)
+            self.player.seekTime(position)
+            self.resume_at = t + RESYNC_RESUME
+        elif self.resync_at is None and t > self.resync_until:
+            self.resync_until = None
+
+    def resume(self):
+        self.resync_at = self.resume_at = self.resync_until = None
+        jsonrpc("Player.PlayPause", playerid=1, play=True)
+
     def update_tracks(self):
         r = jsonrpc("Player.GetProperties", playerid=1, properties=TRACK_PROPERTIES)
         if not r:
             return
+        audio = (r.get("currentaudiostream") or {}).get("index")
+        subtitle = (r.get("currentsubtitle") or {}).get("index") if r.get("subtitleenabled") else None
+        if (audio, subtitle) != (self.player_state["audioIndex"], self.player_state["subtitleIndex"]):
+            log("tracks reported: audio", audio, "subtitle", subtitle, "output", output_mode())
         self.set_player(
             audio=[{"index": a["index"], "language": a.get("language", ""), "name": a.get("name", ""),
                     "codec": a.get("codec", ""), "channels": a.get("channels", 0)}
@@ -455,8 +530,7 @@ class VideoApp(App):
             subtitles=[{"index": s["index"], "language": s.get("language", ""), "name": s.get("name", ""),
                         "forced": s.get("isforced", False), "impaired": s.get("isimpaired", False)}
                        for s in r.get("subtitles", [])],
-            audioIndex=(r.get("currentaudiostream") or {}).get("index"),
-            subtitleIndex=(r.get("currentsubtitle") or {}).get("index") if r.get("subtitleenabled") else None)
+            audioIndex=audio, subtitleIndex=subtitle)
 
     def ours(self, dialog):
         return self.osd_open and dialog == self.display.ids.get("player")
