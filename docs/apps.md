@@ -145,6 +145,7 @@ The base `App` has three commands:
 |---|---|---|
 | `ready` | Report the first rendered page frame. Until this command, the startup mark remains visible and keys are withheld from the page. | Done. |
 | `exit` | Close the app. | Closed. |
+| `forward-source {base}` | Set the HTTP/HTTPS base URL that `/api/forward/` passes requests on to; null clears it. A rejected base returns `invalid` and keeps the previous one. | Source set. |
 | `cpu-rendering {on}` | Select CPU (`true`) or GPU (`false`) rendering for all Oriel apps. CPU rendering is a fallback for GPU rendering errors. | Setting saved. A changed value restarts the shell and reloads the page, losing its in-memory state. |
 
 ### State
@@ -281,14 +282,15 @@ hardware cannot report them. The `player` fields are:
 | `GET /api/store` | Saved app settings. |
 | `POST /api/store` | Merge an object into saved settings; null deletes a key. Return the merged settings. |
 | `GET /files/<path>` | A file from the app's `files_dir`, or 404. |
+| `* /api/forward/<path>` | The request, passed on to `<base>/<path>` of the `forward-source`; see Forwarding. |
 
 The add-on stores settings in `store.json`, shared by bundled pages and
 development-server pages.
 
-Send `ready` after rendering the first frame. Send JSON bodies as
-`text/plain`, the default when passing a string to `fetch`. This permits
-requests from development-server pages without CORS preflights, which the
-add-on does not handle.
+Send `ready` after rendering the first frame. Send JSON bodies to
+`/api/cmd` and `/api/store` as `text/plain`, the default when passing a
+string to `fetch`. This permits requests from development-server pages
+without CORS preflights, which those routes do not handle.
 
 Parallel requests can execute out of order. Wait for each reply before
 sending the next command when order matters.
@@ -296,6 +298,27 @@ sending the next command when order matters.
 Requests must use `127.0.0.1:32499` or `localhost:32499` as the host.
 Accepted origins are the app's page and the configured development server;
 requests without an `Origin` are also accepted. Other origins receive 403.
+
+### Forwarding
+
+A page can read replies only from servers that allow its origin with CORS
+headers. For a server that sends none, set its address with
+`forward-source` and request `/api/forward/<path>`: the add-on sends the
+request to `<base>/<path>` with the page's method, query, body and headers,
+and answers with the server's status, headers and body. It leaves out
+cookies, the page's `Origin` and `Referer`, and the server's CORS headers.
+A redirect within the base stays on `/api/forward/`. Only the base is
+reachable; set another to change servers.
+
+Replies are read whole, up to 16 MiB, and the server has 30 s to answer.
+Use the route for API requests; play media through `media-source`, and
+load images straight from the server. A failure of the route itself
+carries an `Oriel-Forward` header naming its code: `unavailable` (409)
+without a source, `unreachable` (502) when the server doesn't answer or its
+reply is too large. Other replies are the server's own.
+
+Development-server pages may send any headers: the route answers their
+CORS preflights and exposes every reply header.
 
 ### `@oriel/web`
 
@@ -321,6 +344,7 @@ Set `allow-remote=root` in `.npmrc` to permit the URL dependency.
 | `load()`, `save(changes)` | Load and update saved settings. |
 | `action(event)`, `Action`, `Digit` | Map a `KeyboardEvent` to a remote action name. |
 | `ORIGIN` | API origin: empty for the bundled page, which the add-on serves on port 32499; `http://127.0.0.1:32499` for a page from a development server. |
+| `FORWARD` | `ORIGIN` followed by `/api/forward`, the route to the `forward-source`. |
 
 ### Drawing over video
 

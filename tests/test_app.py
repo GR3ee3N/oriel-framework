@@ -1,15 +1,18 @@
 import json
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from .kodi import kodi
 
 
-class AppTests(unittest.TestCase):
+class Harness(unittest.TestCase):
+    """An app with its page server and controller running."""
+
     def setUp(self):
         self.oriel, _, self.directory = self.enterContext(kodi())
         self.log_path = self.directory / "addon.log"
@@ -81,9 +84,11 @@ class AppTests(unittest.TestCase):
     def cmd(self, **command):
         return self.request("/api/cmd", json.dumps(command).encode())
 
+
+class AppTests(Harness):
     def test_commands_and_initial_event(self):
         self.assertEqual(set(self.app.commands),
-                         {"ready", "exit", "cpu-rendering", "add", "refuse", "fail", "opaque", "slow"})
+                         {"ready", "exit", "cpu-rendering", "forward-source", "add", "refuse", "fail", "opaque", "slow"})
         self.assertEqual(self.cmd(cmd="add", amount=2), (200, {"result": {"count": 2}}))
         with urlopen(f"{self.base}/api/events", timeout=3) as events:
             self.assertEqual(events.readline(), b"event: state\n")
@@ -219,3 +224,113 @@ class AppTests(unittest.TestCase):
             self.assertEqual(self.cmd(cmd="exit"), (200, {"result": None}))
             tick.join(1)
         self.assertFalse(tick.is_alive(), "tick thread outlived the app")
+
+
+class Upstream(BaseHTTPRequestHandler):
+    """A server that answers with what it received."""
+
+    def answer(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.path.startswith("/silo/moved"):
+            self.send_response(302)
+            self.send_header("Location", "/silo/api/here")
+            self.send_header("Content-Length", "0")
+            return self.end_headers()
+        reply = json.dumps({"method": self.command, "path": self.path, "body": body.decode(),
+                            "headers": {k.lower(): v for k, v in self.headers.items()}}).encode()
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("ETag", '"v1"')
+        self.send_header("Set-Cookie", "session=1")
+        self.send_header("Access-Control-Allow-Origin", "https://elsewhere.example")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(reply)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = answer
+
+    def log_message(self, format, *args):
+        pass
+
+
+class ForwardTests(Harness):
+    def setUp(self):
+        super().setUp()
+        self.upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=self.upstream.serve_forever, daemon=True).start()
+        self.addCleanup(self.upstream.server_close)
+        self.addCleanup(self.upstream.shutdown)
+        self.source = f"http://127.0.0.1:{self.upstream.server_address[1]}/silo/"
+
+    def forward(self, path, method="GET", body=None, **headers):
+        class Stay(HTTPRedirectHandler):
+            def redirect_request(self, *args):
+                return None
+
+        try:
+            response = build_opener(Stay).open(Request(self.base + path, body, headers, method=method), timeout=3)
+        except HTTPError as error:
+            response = error
+        with response:
+            data = response.read()
+            json_reply = response.headers["Content-Type"] == "application/json" and data
+            return response.status, response.headers, json.loads(data) if json_reply else None
+
+    def test_requests_reach_the_source_with_their_method_query_body_and_headers(self):
+        self.assertEqual(self.cmd(cmd="forward-source", base=self.source), (200, {"result": None}))
+        status, headers, echo = self.forward(
+            "/api/forward/api/v2/items?limit=5", "POST", b'{"a": 1}',
+            Authorization="Bearer secret", **{"Content-Type": "application/json", "X-Profile-Id": "p1",
+                                              "Cookie": "c=1", "Origin": self.base})
+        self.assertEqual((status, echo["method"], echo["path"], echo["body"]), (201, "POST", "/silo/api/v2/items?limit=5", '{"a": 1}'))
+        self.assertEqual(echo["headers"]["authorization"], "Bearer secret")
+        self.assertEqual(echo["headers"]["x-profile-id"], "p1")
+        self.assertEqual(echo["headers"]["host"], f"127.0.0.1:{self.upstream.server_address[1]}")
+        for dropped in ("cookie", "origin"):
+            self.assertNotIn(dropped, echo["headers"])
+        self.assertEqual(headers["ETag"], '"v1"')
+        self.assertIsNone(headers["Set-Cookie"])
+        self.assertIsNone(headers["Access-Control-Allow-Origin"])
+        for method in ("PUT", "PATCH", "DELETE"):
+            with self.subTest(method=method):
+                self.assertEqual(self.forward("/api/forward/x", method, b"{}")[2]["method"], method)
+        status, headers, data = self.forward("/api/forward/x", "HEAD")
+        self.assertEqual((status, data), (201, None))
+        self.assertNotIn("Authorization", self.log_path.read_text())
+
+    def test_redirects_within_the_source_stay_on_the_forward_route(self):
+        self.cmd(cmd="forward-source", base=self.source)
+        status, headers, _ = self.forward("/api/forward/moved")
+        self.assertEqual((status, headers["Location"]), (302, "/api/forward/api/here"))
+
+    def test_failures_are_marked_apart_from_the_servers_replies(self):
+        status, headers, reply = self.forward("/api/forward/x")
+        self.assertEqual((status, headers["Oriel-Forward"], reply["code"]), (409, "unavailable", "unavailable"))
+        self.cmd(cmd="forward-source", base="http://127.0.0.1:9/")
+        status, headers, reply = self.forward("/api/forward/x")
+        self.assertEqual((status, headers["Oriel-Forward"], reply["code"]), (502, "unreachable", "unreachable"))
+        self.cmd(cmd="forward-source", base=None)
+        self.assertEqual(self.forward("/api/forward/x")[0], 409)
+
+    def test_bad_sources_are_refused_and_keep_the_previous_one(self):
+        self.cmd(cmd="forward-source", base=self.source)
+        for base in ("ftp://host/", "http://user:pw@host/", "http://host/?q=1", "/relative", 5):
+            with self.subTest(base=base):
+                self.assertEqual(self.cmd(cmd="forward-source", base=base)[1]["code"], "invalid")
+        self.assertEqual(self.forward("/api/forward/x")[0], 201)
+
+    def test_only_the_page_and_development_server_may_forward(self):
+        self.cmd(cmd="forward-source", base=self.source)
+        self.assertEqual(self.forward("/api/forward/x", Origin="http://foreign.example")[0], 403)
+        self.assertEqual(self.forward("/api/forwarded", "PUT", b"{}")[0], 404)
+        self.assertEqual(self.forward("/api/forward/x", "OPTIONS")[0], 403)
+        self.app.server.origin = "http://dev.example:5173"
+        status, headers, _ = self.forward("/api/forward/x", "OPTIONS", Origin=self.app.server.origin,
+                                          **{"Access-Control-Request-Method": "POST",
+                                             "Access-Control-Request-Headers": "authorization, content-type"})
+        self.assertEqual((status, headers["Access-Control-Allow-Origin"]), (204, self.app.server.origin))
+        self.assertEqual(headers["Access-Control-Allow-Headers"], "authorization, content-type")
+        status, headers, _ = self.forward("/api/forward/x", Origin=self.app.server.origin)
+        self.assertEqual((status, headers["Access-Control-Allow-Origin"]), (201, self.app.server.origin))
+        self.assertEqual(headers["Access-Control-Expose-Headers"], "*")

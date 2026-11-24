@@ -6,6 +6,7 @@
                        with the HTTP status defined by FAILURES
     GET  /api/store    saved settings
     POST /api/store    merge settings; null deletes a key
+    *    /api/forward/  the request, passed on to the app's forward source
 
 Do not serve media to Kodi here: its playback threads must not wait on
 Kodi's Python interpreter. /api accepts the configured development origin.
@@ -22,6 +23,8 @@ import os
 import queue
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import forward
 
 # Map command failures to HTTP status: invalid request, unavailable app state,
 # unexpected handler failure, or an expired response deadline with unknown outcome.
@@ -61,6 +64,8 @@ class Server(ThreadingHTTPServer):
         self.clients = set()
         self.state = {}
         self.serving = False
+        # The forward.Source requests on /api/forward/ go to; None refuses them.
+        self.forward = None
 
     def store(self, changes=None):
         with self.lock:
@@ -108,9 +113,15 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("Host") in own and (
             origin is None or origin == self.server.origin or origin in (f"http://{host}" for host in own))
 
+    def forwarded(self):
+        path = self.path.split("?", 1)[0]
+        return path == forward.PREFIX or path.startswith(forward.PREFIX + "/")
+
     def do_GET(self):
         if not self.trusted():
             return self.send_error(403)
+        if self.forwarded():
+            return self.pass_on()
         path = self.path.split("?", 1)[0]
         if path == "/api/events":
             self.events()
@@ -124,6 +135,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted():
             return self.send_error(403)
+        if self.forwarded():
+            return self.pass_on()
         if self.path not in ("/api/cmd", "/api/store"):
             return self.send_error(404)
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -144,6 +157,63 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError) as e:
             status, body = failure("failed", f"the result is not JSON: {e}")
             self.json(body, status)
+
+    def do_HEAD(self):
+        self.only_forward()
+
+    def do_PUT(self):
+        self.only_forward()
+
+    def do_PATCH(self):
+        self.only_forward()
+
+    def do_DELETE(self):
+        self.only_forward()
+
+    def only_forward(self):
+        if not self.trusted():
+            return self.send_error(403)
+        if not self.forwarded():
+            return self.send_error(404 if self.command != "HEAD" else 405)
+        self.pass_on()
+
+    def do_OPTIONS(self):
+        # A development-server page asks before sending forwarded requests
+        # with headers such as Authorization; the bundled page never does.
+        if not self.trusted() or not self.forwarded() or not self.server.origin:
+            return self.send_error(403)
+        self.send_response(204)
+        self.cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE")
+        asked = self.headers.get("Access-Control-Request-Headers")
+        if asked:
+            self.send_header("Access-Control-Allow-Headers", asked)
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def pass_on(self):
+        source = self.server.forward
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else None
+        if source is None:
+            status, headers, data = forward.failure("unavailable", "no forward source")
+        else:
+            try:
+                status, headers, data = forward.send(
+                    source, self.command, self.path[len(forward.PREFIX):], dict(self.headers), body)
+            except forward.Unreachable as e:
+                status, headers, data = forward.failure("unreachable", str(e))
+        self.send_response(status)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(data)))
+        self.cors()
+        if self.server.origin:
+            self.send_header("Access-Control-Expose-Headers", "*")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def json(self, data, status=200):
         body = json.dumps(data).encode()

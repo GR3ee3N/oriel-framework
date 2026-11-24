@@ -20,7 +20,9 @@ export type BaseCommand =
   | { cmd: 'exit' }
   /** Save cpuRendering. A changed value restarts WebKit to apply the setting,
    * reloading the page and discarding its in-memory state. */
-  | { cmd: 'cpu-rendering'; on: boolean };
+  | { cmd: 'cpu-rendering'; on: boolean }
+  /** Pass requests to `FORWARD` on to `base`; null stops forwarding. */
+  | { cmd: 'forward-source'; base: string | null };
 
 /** Failure codes from docs/apps.md: invalid request, unavailable app state,
  * unexpected handler failure, response timeout with unknown outcome, or
@@ -39,6 +41,9 @@ export class CommandFailure extends Error {
 // The add-on serves the bundled page on its API port. A page from a
 // development server still runs in the box's WebKit and reaches the same API.
 export const ORIGIN = globalThis.location?.port === '32499' ? '' : 'http://127.0.0.1:32499';
+
+/** Requests to `${FORWARD}/<path>` go to `<base>/<path>` of the `forward-source`. */
+export const FORWARD = `${ORIGIN}/api/forward`;
 
 export interface Bridge<S extends BaseState, C extends { cmd: string }> {
   /** The latest state. Each update replaces the object rather than changing it. */

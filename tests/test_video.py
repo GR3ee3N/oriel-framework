@@ -95,7 +95,7 @@ class VideoTests(unittest.TestCase):
 
     def test_video_commands_inherit_base_commands(self):
         app = self.app_in("browse")
-        self.assertEqual(set(app.commands), {"ready", "exit", "cpu-rendering", "media-source", "play",
+        self.assertEqual(set(app.commands), {"ready", "exit", "cpu-rendering", "forward-source", "media-source", "play",
                                              "osd-on", "osd-off", "set-paused", "stop", "seek-to", "audio", "subtitle"})
 
     def test_keys_kodi_acts_on_only_show_the_osd(self):

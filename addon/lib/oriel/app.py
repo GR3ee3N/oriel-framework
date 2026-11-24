@@ -23,7 +23,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 
-from . import config, display, webkit
+from . import config, display, forward, webkit
 from .log import close_log, log, open_log
 from .server import Server, failure
 from .shell import Shell
@@ -342,6 +342,16 @@ class App:
     @command("exit")
     def page_exit(self):
         self.close()
+
+    @command("forward-source", log=True)
+    def page_forward_source(self, base):
+        if base is None:
+            self.server.forward = None
+            return
+        try:
+            self.server.forward = forward.Source(base)
+        except ValueError as e:
+            raise CommandError(str(e), "invalid") from e
 
     @command("cpu-rendering", log=True)
     def page_cpu_rendering(self, on):
